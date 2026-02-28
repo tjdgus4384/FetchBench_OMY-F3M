@@ -41,7 +41,8 @@ env:
   enableCameraSensors: True
 
   robot:
-    type: franka_r3_cvx
+    robot_name: franka_panda   # "franka_panda" or "omy_f3m"
+    type: franka_r3_cvx        # URDF variant (used by franka only)
     friction: 1.0
     contact_offset: 0.001
     restitution: 0.0

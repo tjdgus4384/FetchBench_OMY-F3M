@@ -72,16 +72,21 @@ class TrimeshWorld(object):
 
 
 class PyBulletOMPL():
-    def __init__(self, config, debug_viz=False):
+    def __init__(self, config, debug_viz=False, robot_cfg=None):
         self.obstacles = []
         self.attachment = []
         self.attach_offset = np.eye(4)
 
         self.cfg = config
         self.debug_viz = debug_viz
+        self.robot_cfg = robot_cfg
 
         self._total_timeout = config["total_timeout"]
         self._single_timeout = config["single_timeout"]
+
+        self._curobo_config_name = robot_cfg.curobo_config_name if robot_cfg is not None else "franka_r3.yml"
+        self._num_arm_dofs = robot_cfg.num_arm_dofs if robot_cfg is not None else 7
+        ompl_urdf = config.get("ompl_urdf", "assets/urdf/franka_description/robots/franka_r3_cvx_ompl.urdf")
 
         pb.connect(pb.GUI if self.debug_viz else pb.DIRECT)
         pb.setAdditionalSearchPath(pybullet_data.getDataPath())
@@ -91,7 +96,7 @@ class PyBulletOMPL():
 
         # load robot
         robot_id = pb.loadURDF(
-            "assets/urdf/franka_description/robots/franka_r3_cvx_ompl.urdf",
+            ompl_urdf,
             basePosition=(0, 0, 0), baseOrientation=(0, 0, 0, 1), useFixedBase=1,
             flags=pb.URDF_IGNORE_VISUAL_SHAPES | pb.URDF_USE_INERTIA_FROM_FILE
         )
@@ -126,7 +131,7 @@ class PyBulletOMPL():
         self.pb_ompl_interface.set_planner(config["planner"])
 
     def _get_cuRobo_robot_config(self):
-        robot_config = load_yaml(join_path(get_robot_configs_path(), "franka_r3.yml"))["robot_cfg"]
+        robot_config = load_yaml(join_path(get_robot_configs_path(), self._curobo_config_name))["robot_cfg"]
         robot_cuRobo_cfg = RobotConfig.from_dict(robot_config)
 
         return robot_cuRobo_cfg
@@ -143,7 +148,7 @@ class PyBulletOMPL():
         ik_result = self.ik_solver.solve(ik_pose)
 
         if bool(ik_result.success.reshape(-1).cpu().numpy()):
-            return ik_result.solution[:7].cpu().numpy().reshape(-1)
+            return ik_result.solution[:self._num_arm_dofs].cpu().numpy().reshape(-1)
 
         return None
 
@@ -258,18 +263,23 @@ class PyBulletOMPL():
 
 
 class PyBulletOMPLPCD():
-    def __init__(self, config, debug_viz=False, tmp_file_path='.'):
+    def __init__(self, config, debug_viz=False, tmp_file_path='.', robot_cfg=None):
 
         self.obstacles = []
 
         self.cfg = config
         self.debug_viz = debug_viz
+        self.robot_cfg = robot_cfg
 
         self._total_timeout = config["total_timeout"]
         self._single_timeout = config["single_timeout"]
         self._occ_grid_size = config['occ_grid_size']
 
         self._mesh_file_path = tmp_file_path
+
+        self._curobo_config_name = robot_cfg.curobo_config_name if robot_cfg is not None else "franka_r3.yml"
+        self._num_arm_dofs = robot_cfg.num_arm_dofs if robot_cfg is not None else 7
+        ompl_urdf = config.get("ompl_urdf", "assets/urdf/franka_description/robots/franka_r3_cvx_ompl.urdf")
 
         pb.connect(pb.GUI if self.debug_viz else pb.DIRECT)
         pb.setAdditionalSearchPath(pybullet_data.getDataPath())
@@ -279,7 +289,7 @@ class PyBulletOMPLPCD():
 
         # load robot
         robot_id = pb.loadURDF(
-            "assets/urdf/franka_description/robots/franka_r3_cvx_ompl.urdf",
+            ompl_urdf,
             basePosition=(0, 0, 0), baseOrientation=(0, 0, 0, 1), useFixedBase=1,
             flags=pb.URDF_IGNORE_VISUAL_SHAPES | pb.URDF_USE_INERTIA_FROM_FILE
         )
@@ -304,16 +314,19 @@ class PyBulletOMPLPCD():
         self.ik_solver = IKSolver(ik_config)
 
         # setup pb_ompl
-        robot_mesh_path = ['franka_description/meshes/collision_cvx/link0.obj',
-                           'franka_description/meshes/collision_cvx/link1.obj',
-                           'franka_description/meshes/collision_cvx/link2.obj',
-                           'franka_description/meshes/collision_cvx/link3.obj',
-                           'franka_description/meshes/collision_cvx/link4.obj',
-                           'franka_description/meshes/collision_cvx/link5.obj',
-                           'franka_description/meshes/collision_cvx/link6.obj',
-                           'franka_description/meshes/collision_cvx/link7.obj',
-                           'franka_description/meshes/collision_cvx/hand.obj',
-                           'franka_description/meshes/collision_cvx/finger_4part.obj']
+        default_robot_mesh_path = [
+            'franka_description/meshes/collision_cvx/link0.obj',
+            'franka_description/meshes/collision_cvx/link1.obj',
+            'franka_description/meshes/collision_cvx/link2.obj',
+            'franka_description/meshes/collision_cvx/link3.obj',
+            'franka_description/meshes/collision_cvx/link4.obj',
+            'franka_description/meshes/collision_cvx/link5.obj',
+            'franka_description/meshes/collision_cvx/link6.obj',
+            'franka_description/meshes/collision_cvx/link7.obj',
+            'franka_description/meshes/collision_cvx/hand.obj',
+            'franka_description/meshes/collision_cvx/finger_4part.obj',
+        ]
+        robot_mesh_path = config.get("robot_collision_meshes", default_robot_mesh_path)
         robot_meshes = []
         for path in robot_mesh_path:
             mesh = trimesh.load(f'assets/urdf/{path}', force='mesh')
@@ -326,7 +339,7 @@ class PyBulletOMPLPCD():
         self.pb_ompl_interface.set_planner(config["planner"])
 
     def _get_cuRobo_robot_config(self):
-        robot_config = load_yaml(join_path(get_robot_configs_path(), "franka_r3.yml"))["robot_cfg"]
+        robot_config = load_yaml(join_path(get_robot_configs_path(), self._curobo_config_name))["robot_cfg"]
         robot_cuRobo_cfg = RobotConfig.from_dict(robot_config)
 
         return robot_cuRobo_cfg
@@ -346,7 +359,7 @@ class PyBulletOMPLPCD():
         ik_result = self.ik_solver.solve(ik_pose)
 
         if bool(ik_result.success.reshape(-1).cpu().numpy()):
-            return ik_result.solution[:7].cpu().numpy().reshape(-1)
+            return ik_result.solution[:self._num_arm_dofs].cpu().numpy().reshape(-1)
 
         return None
 

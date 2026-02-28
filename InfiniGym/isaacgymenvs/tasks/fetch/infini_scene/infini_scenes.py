@@ -12,9 +12,11 @@ from isaacgymenvs.tasks.fetch.vec_task import VecTask
 from isaacgymenvs.tasks.fetch.trimesh_scene import TrimeshRearrangeScene
 from isaacgymenvs.tasks.fetch.utils.load_utils import (sample_random_scene,
                                                  get_franka_panda_asset,
+                                                 get_robot_asset_path,
                                                  sample_random_objects,
                                                  sample_random_combos,
                                                  InfiniSceneLoader)
+from isaacgymenvs.tasks.fetch.utils.robot_config import get_robot_config
 
 
 class InfiniScene(VecTask):
@@ -91,12 +93,19 @@ class InfiniScene(VecTask):
 
         self.up_axis = "z"
         self.up_axis_idx = 2
+
+        # Robot config
+        robot_name = self.cfg["env"]["robot"].get("robot_name", "franka_panda")
+        robot_type = self.cfg["env"]["robot"].get("type", None)
+        self.robot_cfg = get_robot_config(robot_name, robot_type)
+        self.n_arm = self.robot_cfg.num_arm_dofs
+        self.n_grip = self.robot_cfg.num_gripper_dofs
+
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device,
                          graphics_device_id=graphics_device_id, headless=headless,
                          virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
-        self.robot_default_dof_pos = (to_torch([-0.31267092, -1.1996635, 0.05781832, -2.1767514,
-                      0.06494738, 0.9786396, 0.53001183, 0.04, 0.04], device=self.device))
+        self.robot_default_dof_pos = to_torch(self.robot_cfg.default_dof_pos, device=self.device)
 
         # Reset all environments
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
@@ -124,7 +133,7 @@ class InfiniScene(VecTask):
     def load_robot_asset(self):
         # load robot asset
         asset_options = gymapi.AssetOptions()
-        asset_options.flip_visual_attachments = True
+        asset_options.flip_visual_attachments = self.robot_cfg.flip_visual_attachments
         asset_options.fix_base_link = True
         asset_options.collapse_fixed_joints = False
         asset_options.disable_gravity = True
@@ -146,7 +155,7 @@ class InfiniScene(VecTask):
             asset_options.angular_damping = 0.5                      # default = 0.5
             asset_options.max_angular_velocity = 2 * np.pi           # default = 64.0
 
-        robot_asset_path = get_franka_panda_asset()
+        robot_asset_path = get_robot_asset_path(self.robot_cfg)
         robot_asset = self.gym.load_asset(self.sim, robot_asset_path['asset_root'],
                                           robot_asset_path['urdf_file'], asset_options)
 
@@ -485,7 +494,8 @@ class InfiniScene(VecTask):
             if self.aggregate_mode >= 3:
                 self.gym.begin_aggregate(env_ptr, max_agg_bodies, max_agg_shapes, True)
 
-            robot_actor = self.gym.create_actor(env_ptr, robot_asset, robot_start_pose, "robot", i, 0, seg_idx)
+            collision_filter = self.robot_cfg.self_collision_filter
+            robot_actor = self.gym.create_actor(env_ptr, robot_asset, robot_start_pose, "robot", i, collision_filter, seg_idx)
             seg_idx += 1
             self.gym.set_actor_dof_properties(env_ptr, robot_actor, robot_dof_props)
 
@@ -581,55 +591,60 @@ class InfiniScene(VecTask):
 
         robot_dof_props = self.gym.get_asset_dof_properties(asset)
         if self.cfg["env"]["armControlType"] == 'joint':
-            robot_dof_stiffness = to_torch([1e3, 1e3, 1e3, 1e3, 1e3, 1e3, 1e3], dtype=torch.float, device=self.device)
-            robot_dof_damping = to_torch([50, 50, 50, 50, 50, 50, 50], dtype=torch.float, device=self.device)
+            robot_dof_stiffness = to_torch([1e3] * self.n_arm, dtype=torch.float, device=self.device)
+            robot_dof_damping = to_torch([50] * self.n_arm, dtype=torch.float, device=self.device)
 
-            for i in range(self.num_robot_dofs - 2):
+            for i in range(self.n_arm):
                 robot_dof_props['driveMode'][i] = gymapi.DOF_MODE_POS
                 robot_dof_props['stiffness'][i] = robot_dof_stiffness[i]
                 robot_dof_props['damping'][i] = robot_dof_damping[i]
 
         elif self.cfg["env"]["armControlType"] == 'osc':
             # set robot dof properties
-            robot_dof_stiffness = to_torch([0, 0, 0, 0, 0, 0, 0], dtype=torch.float, device=self.device)
-            robot_dof_damping = to_torch([0, 0, 0, 0, 0, 0, 0], dtype=torch.float, device=self.device)
+            robot_dof_stiffness = to_torch([0] * self.n_arm, dtype=torch.float, device=self.device)
+            robot_dof_damping = to_torch([0] * self.n_arm, dtype=torch.float, device=self.device)
 
-            for i in range(self.num_robot_dofs - 2):
+            for i in range(self.n_arm):
                 robot_dof_props['driveMode'][i] = gymapi.DOF_MODE_EFFORT
                 robot_dof_props['stiffness'][i] = robot_dof_stiffness[i]
                 robot_dof_props['damping'][i] = robot_dof_damping[i]
         else:
             raise NotImplementedError
 
-        if self.cfg["env"]["gripperControlType"] == 'position':
-            robot_dof_stiffness = to_torch([1e4, 1e4], dtype=torch.float, device=self.device)
-            robot_dof_damping = to_torch([4e2, 4e2], dtype=torch.float, device=self.device)
+        # Per-robot gripper DOF overrides (fallback to defaults)
+        grip_stiff_val = self.robot_cfg.gripper_stiffness if self.robot_cfg.gripper_stiffness is not None else 1e4
+        grip_damp_val = self.robot_cfg.gripper_damping if self.robot_cfg.gripper_damping is not None else 4e2
+        grip_effort_val = self.robot_cfg.gripper_effort if self.robot_cfg.gripper_effort is not None else 400
 
-            for i in range(2):
-                robot_dof_props['driveMode'][i + self.num_robot_dofs - 2] = gymapi.DOF_MODE_POS
-                robot_dof_props['stiffness'][i + self.num_robot_dofs - 2] = robot_dof_stiffness[i]
-                robot_dof_props['damping'][i + self.num_robot_dofs - 2] = robot_dof_damping[i]
-                robot_dof_props['effort'][i + self.num_robot_dofs - 2] = 400
+        if self.cfg["env"]["gripperControlType"] == 'position':
+            robot_dof_stiffness = to_torch([grip_stiff_val] * self.n_grip, dtype=torch.float, device=self.device)
+            robot_dof_damping = to_torch([grip_damp_val] * self.n_grip, dtype=torch.float, device=self.device)
+
+            for i in range(self.n_grip):
+                robot_dof_props['driveMode'][i + self.n_arm] = gymapi.DOF_MODE_POS
+                robot_dof_props['stiffness'][i + self.n_arm] = robot_dof_stiffness[i]
+                robot_dof_props['damping'][i + self.n_arm] = robot_dof_damping[i]
+                robot_dof_props['effort'][i + self.n_arm] = grip_effort_val
 
         elif self.cfg["env"]["gripperControlType"] == 'velocity':
-            # set robot dof properties
-            robot_dof_stiffness = to_torch([0, 0], dtype=torch.float, device=self.device)
-            robot_dof_damping = to_torch([7e2, 7e2], dtype=torch.float, device=self.device)
+            robot_dof_stiffness = to_torch([0] * self.n_grip, dtype=torch.float, device=self.device)
+            robot_dof_damping = to_torch([grip_damp_val] * self.n_grip, dtype=torch.float, device=self.device)
 
-            for i in range(2):
-                robot_dof_props['driveMode'][i + self.num_robot_dofs - 2] = gymapi.DOF_MODE_VEL
-                robot_dof_props['stiffness'][i + self.num_robot_dofs - 2] = robot_dof_stiffness[i]
-                robot_dof_props['damping'][i + self.num_robot_dofs - 2] = robot_dof_damping[i]
+            for i in range(self.n_grip):
+                robot_dof_props['driveMode'][i + self.n_arm] = gymapi.DOF_MODE_VEL
+                robot_dof_props['stiffness'][i + self.n_arm] = robot_dof_stiffness[i]
+                robot_dof_props['damping'][i + self.n_arm] = robot_dof_damping[i]
+                robot_dof_props['effort'][i + self.n_arm] = grip_effort_val
 
         elif self.cfg["env"]["gripperControlType"] == 'effort':
-            # set robot dof properties
-            robot_dof_stiffness = to_torch([0, 0], dtype=torch.float, device=self.device)
-            robot_dof_damping = to_torch([0, 0], dtype=torch.float, device=self.device)
+            robot_dof_stiffness = to_torch([0] * self.n_grip, dtype=torch.float, device=self.device)
+            robot_dof_damping = to_torch([0] * self.n_grip, dtype=torch.float, device=self.device)
 
-            for i in range(2):
-                robot_dof_props['driveMode'][i + self.num_robot_dofs - 2] = gymapi.DOF_MODE_EFFORT
-                robot_dof_props['stiffness'][i + self.num_robot_dofs - 2] = robot_dof_stiffness[i]
-                robot_dof_props['damping'][i + self.num_robot_dofs - 2] = robot_dof_damping[i]
+            for i in range(self.n_grip):
+                robot_dof_props['driveMode'][i + self.n_arm] = gymapi.DOF_MODE_EFFORT
+                robot_dof_props['stiffness'][i + self.n_arm] = robot_dof_stiffness[i]
+                robot_dof_props['damping'][i + self.n_arm] = robot_dof_damping[i]
+                robot_dof_props['effort'][i + self.n_arm] = grip_effort_val
         else:
             raise NotImplementedError
 
@@ -682,13 +697,13 @@ class InfiniScene(VecTask):
         env_ptr, robot_ptr = self.envs[0], self.robots[0]
 
         self.robot_handles = {
-            "hand": self.gym.find_actor_rigid_body_handle(env_ptr, robot_ptr, "panda_hand"),
-            "left_finger": self.gym.find_actor_rigid_body_handle(env_ptr, robot_ptr, "panda_leftfinger"),
-            "right_finger": self.gym.find_actor_rigid_body_handle(env_ptr, robot_ptr, "panda_rightfinger"),
+            "hand": self.gym.find_actor_rigid_body_handle(env_ptr, robot_ptr, self.robot_cfg.eef_link_name),
+            "left_finger": self.gym.find_actor_rigid_body_handle(env_ptr, robot_ptr, self.robot_cfg.left_finger_link_name),
+            "right_finger": self.gym.find_actor_rigid_body_handle(env_ptr, robot_ptr, self.robot_cfg.right_finger_link_name),
             "left_finger_id": self.gym.find_actor_rigid_body_index(env_ptr, robot_ptr,
-                                                                   'panda_leftfinger', gymapi.DOMAIN_ENV),
+                                                                   self.robot_cfg.left_finger_link_name, gymapi.DOMAIN_ENV),
             "right_finger_id": self.gym.find_actor_rigid_body_index(env_ptr, robot_ptr,
-                                                                    'panda_rightfinger', gymapi.DOMAIN_ENV)
+                                                                    self.robot_cfg.right_finger_link_name, gymapi.DOMAIN_ENV)
         }
 
         # Get total DOFs
@@ -724,9 +739,9 @@ class InfiniScene(VecTask):
         self._scene_base_state = self._root_state[:, 2, :]
 
         # end-effector jacobian and inertia matrix for OSC
-        hand_joint_index = self.gym.get_actor_joint_dict(env_ptr, robot_ptr)['panda_hand_joint']
-        self._j_eef = _robot_jacobian_tensor[:, hand_joint_index, :, :7]
-        self._mm = _robot_mm_tensor[:, :7, :7]
+        hand_joint_index = self.gym.get_actor_joint_dict(env_ptr, robot_ptr)[self.robot_cfg.eef_joint_name]
+        self._j_eef = _robot_jacobian_tensor[:, hand_joint_index, :, :self.n_arm]
+        self._mm = _robot_mm_tensor[:, :self.n_arm, :self.n_arm]
 
         # object states
         self._obj_state = self._root_state[:, -self.num_objs:, :]
@@ -746,18 +761,19 @@ class InfiniScene(VecTask):
         self._effort_control = torch.zeros_like(self._pos_control)
 
         if self.cfg["env"]["armControlType"] == 'osc':
-            self._arm_control = self._effort_control[:, :7]
+            self._arm_control = self._effort_control[:, :self.n_arm]
         elif self.cfg["env"]["armControlType"] == 'joint':
-            self._arm_control = self._pos_control[:, :7]
+            self._arm_control = self._pos_control[:, :self.n_arm]
         else:
             raise NotImplementedError
 
+        grip_slice = slice(self.n_arm, self.n_arm + self.n_grip)
         if self.cfg["env"]["gripperControlType"] == 'effort':
-            self._gripper_control = self._effort_control[:, 7:9]
+            self._gripper_control = self._effort_control[:, grip_slice]
         elif self.cfg["env"]["gripperControlType"] == 'position':
-            self._gripper_control = self._pos_control[:, 7:9]
+            self._gripper_control = self._pos_control[:, grip_slice]
         elif self.cfg["env"]["gripperControlType"] == 'velocity':
-            self._gripper_control = self._vel_control[:, 7:9]
+            self._gripper_control = self._vel_control[:, grip_slice]
         else:
             raise NotImplementedError
 
@@ -796,7 +812,7 @@ class InfiniScene(VecTask):
         )
 
         # Overwrite gripper init pos (no noise since these are always position controlled)
-        pos[:, -2:] = self.robot_default_dof_pos[-2:]
+        pos[:, -self.n_grip:] = self.robot_default_dof_pos[-self.n_grip:]
         pos = pos.repeat(len(env_ids), 1)
 
         # Reset the internal obs accordingly

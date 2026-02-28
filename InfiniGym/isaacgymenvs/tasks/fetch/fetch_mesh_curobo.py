@@ -22,7 +22,24 @@ from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGen
 from curobo.geom.sphere_fit import SphereFitType
 
 
+import math as _math
 from isaacgym import gymutil, gymtorch, gymapi
+
+# Scene .obj meshes are authored in Y-up; CuRobo world is Z-up.
+# Rotation: -90° around X  →  quaternion (wxyz) = [cos(-π/4), sin(-π/4), 0, 0]
+_Y2Z_QUAT_WXYZ_NP = np.array([_math.cos(-_math.pi / 4), _math.sin(-_math.pi / 4), 0.0, 0.0])
+
+
+def _qmul_wxyz_np(q1, q2):
+    """Hamilton product of two quaternions in (w,x,y,z) order (numpy)."""
+    w1, x1, y1, z1 = q1
+    w2, x2, y2, z2 = q2
+    return np.array([
+        w1*w2 - x1*x2 - y1*y2 - z1*z2,
+        w1*x2 + x1*w2 + y1*z2 - z1*y2,
+        w1*y2 - x1*z2 + y1*w2 + z1*x2,
+        w1*z2 + x1*y2 - y1*x2 + z1*w2,
+    ])
 from isaacgymenvs.utils.torch_jit_utils import (to_torch, get_axis_params, tensor_clamp,
                                                 tf_vector, tf_combine, quat_mul, quat_conjugate,
                                                 quat_to_angle_axis, tf_inverse, quat_apply,
@@ -161,7 +178,7 @@ class FetchMeshCurobo(FetchSolutionBase):
 
         for i, tr in enumerate(trajs):
             if tr is None:
-                halt_state = self.states["q"][i:i+1][..., :-2].clone().to(self.tensor_args.device)
+                halt_state = self.states["q"][i:i+1][..., :self.n_arm].clone().to(self.tensor_args.device)
 
                 new_pos = torch.ones((max_len, *halt_state.shape[1:]), device=halt_state.device, dtype=halt_state.dtype) * halt_state
                 new_vel = torch.zeros((max_len, *halt_state.shape[1:]), device=halt_state.device, dtype=halt_state.dtype)
@@ -226,7 +243,7 @@ class FetchMeshCurobo(FetchSolutionBase):
         return padded_trajs
 
     def _get_cuRobo_robot_config(self):
-        robot_config = load_yaml(join_path(get_robot_configs_path(), "franka_r3.yml"))["robot_cfg"]
+        robot_config = load_yaml(join_path(get_robot_configs_path(), self.robot_cfg.curobo_config_name))["robot_cfg"]
         robot_cuRobo_cfg = RobotConfig.from_dict(robot_config)
         robot_cuRobo_cfg.cspace.velocity_scale *= self.cfg['solution']['cuRobo']['velocity_scale']
         robot_cuRobo_cfg.cspace.acceleration_scale *= self.cfg['solution']['cuRobo']['acceleration_scale']
@@ -249,11 +266,13 @@ class FetchMeshCurobo(FetchSolutionBase):
         for i in range(self.num_envs):
 
             # add scene asset
+            # Scene .obj files are Y-up; compose scene quat with Y→Z rotation
+            sq_y2z = _qmul_wxyz_np(sq[i], _Y2Z_QUAT_WXYZ_NP)
             scene_meshes = []
             for j, f in enumerate(self.scene_asset[i]["files"]):
                 c_mesh = Mesh(
                         name=f"env_{i}_mesh_{j}",
-                        pose=[*st[i], *sq[i]],
+                        pose=[*st[i], *sq_y2z],
                         file_path=f,
                         scale=[1.0, 1.0, 1.0],
                 )
@@ -269,14 +288,16 @@ class FetchMeshCurobo(FetchSolutionBase):
             # Todo: Add Combo Asset
 
             # add object asset
+            # Object .obj files are also Y-up; compose object quat with Y→Z rotation
             object_meshes = []
             oq_i, ot_i = oq[i], ot[i]
 
             for j, obj in enumerate(self.object_asset[i]):
                 q, t = oq_i[j], ot_i[j]
+                q_y2z = _qmul_wxyz_np(q, _Y2Z_QUAT_WXYZ_NP)
                 o_mesh = Mesh(
                     name=f"env_{i}_obj_{j}",
-                    pose=[*t, *q],
+                    pose=[*t, *q_y2z],
                     file_path=obj['file'],
                     scale=[1.0, 1.0, 1.0]
                 )
@@ -307,7 +328,18 @@ class FetchMeshCurobo(FetchSolutionBase):
 
             sq, st = scene_pose['quat'], scene_pose['pos']
             sq = torch.concat([sq[..., -1:], sq[..., :-1]], dim=-1)
-            pose = Pose(st[i:i+1], sq[i:i+1])
+            # Scene .obj files are Y-up; compose scene quat with Y→Z rotation
+            _y2z = torch.tensor(_Y2Z_QUAT_WXYZ_NP, device=sq.device, dtype=sq.dtype)
+            sq_i = sq[i:i+1]  # (1, 4) wxyz
+            w1, x1, y1, z1 = sq_i[:, 0], sq_i[:, 1], sq_i[:, 2], sq_i[:, 3]
+            w2, x2, y2, z2 = _y2z[0], _y2z[1], _y2z[2], _y2z[3]
+            sq_y2z = torch.stack([
+                w1*w2 - x1*x2 - y1*y2 - z1*z2,
+                w1*x2 + x1*w2 + y1*z2 - z1*y2,
+                w1*y2 - x1*z2 + y1*w2 + z1*x2,
+                w1*z2 + x1*y2 - y1*x2 + z1*w2,
+            ], dim=-1)
+            pose = Pose(st[i:i+1], sq_y2z)
 
             for j, f in enumerate(self.scene_asset[i]['files']):
                 self.ik_collision.update_mesh_pose(w_obj_pose=pose, name=f'env_{i}_mesh_{j}', env_idx=i)
@@ -315,8 +347,17 @@ class FetchMeshCurobo(FetchSolutionBase):
 
             oq, ot = object_pose['quat'], object_pose['pos']
             oq = torch.concat([oq[..., -1:], oq[..., :-1]], dim=-1)
+            # Object .obj files are also Y-up; compose with Y→Z rotation
             for j in range(self.num_objs):
-                pose = Pose(ot[i:i+1, j], oq[i:i+1, j])
+                oq_j = oq[i:i+1, j]  # (1, 4) wxyz
+                ow1, ox1, oy1, oz1 = oq_j[:, 0], oq_j[:, 1], oq_j[:, 2], oq_j[:, 3]
+                oq_y2z = torch.stack([
+                    ow1*w2 - ox1*x2 - oy1*y2 - oz1*z2,
+                    ow1*x2 + ox1*w2 + oy1*z2 - oz1*y2,
+                    ow1*y2 - ox1*z2 + oy1*w2 + oz1*x2,
+                    ow1*z2 + ox1*y2 - oy1*x2 + oz1*w2,
+                ], dim=-1)
+                pose = Pose(ot[i:i+1, j], oq_y2z)
                 self.ik_collision.update_mesh_pose(w_obj_pose=pose, name=f'env_{i}_obj_{j}', env_idx=i)
                 self.motion_generator_colliders[i].update_mesh_pose(w_obj_pose=pose, name=f'env_{i}_obj_{j}')
 
@@ -334,10 +375,10 @@ class FetchMeshCurobo(FetchSolutionBase):
 
             for i in range(self.num_envs):
                 cu_js = JointState(
-                    position=q[i, :-2],
-                    velocity=qd[i, :-2],
-                    acceleration=q[i, :-2] * 0.0,
-                    jerk=q[i, :-2] * 0.0,
+                    position=q[i, :self.n_arm],
+                    velocity=qd[i, :self.n_arm],
+                    acceleration=q[i, :self.n_arm] * 0.0,
+                    jerk=q[i, :self.n_arm] * 0.0,
                     joint_names=self.robot_joint_names
                 )
                 goal_obj_idx = self.task_obj_index[i][self.get_task_idx()].cpu().numpy()
@@ -351,7 +392,9 @@ class FetchMeshCurobo(FetchSolutionBase):
                 obj_init_pose = self.motion_generator_colliders[i].world_model.get_obstacle(f'env_{i}_obj_{goal_obj_idx}').pose
                 obj_init_pose = Pose.from_list(obj_init_pose, self.tensor_args)
 
-                offset_pos = to_torch([[0.0, 0.0, self.cfg["solution"]["cuRobo"]["attach_object_z_offset"]]], device=self.tensor_args.device, dtype=torch.float)
+                offset_pos = to_torch([self.get_approach_offset(self.cfg["solution"]["cuRobo"]["attach_object_z_offset"],
+                                                               device=self.tensor_args.device)],
+                                      device=self.tensor_args.device, dtype=torch.float)
                 offset_quat = to_torch([[1.0, 0.0, 0.0, 0.0]], device=self.tensor_args.device, dtype=torch.float)
                 offset_pose = Pose(offset_pos.repeat(self.num_envs, 1), offset_quat.repeat(self.num_envs, 1))
 
@@ -374,10 +417,10 @@ class FetchMeshCurobo(FetchSolutionBase):
         if self.debug_viz and self.viewer:
             for i in range(self.num_envs):
                 cu_js = JointState(
-                    position=q[i, :-2],
-                    velocity=qd[i, :-2],
-                    acceleration=q[i, :-2] * 0.0,
-                    jerk=q[i, :-2] * 0.0,
+                    position=q[i, :self.n_arm],
+                    velocity=qd[i, :self.n_arm],
+                    acceleration=q[i, :self.n_arm] * 0.0,
+                    jerk=q[i, :self.n_arm] * 0.0,
                     joint_names=self.robot_joint_names
                 )
 
@@ -433,7 +476,9 @@ class FetchMeshCurobo(FetchSolutionBase):
         for i in range(annotated_grasp_pose.shape[1]):
             grasp_candidate = annotated_grasp_pose[:, i]
             grasp_pose = Pose(grasp_candidate[..., :3], grasp_candidate[..., 3:7])
-            pre_grasp_offset_pos = to_torch([0, 0, -self.cfg["solution"]["pre_grasp_offset"]],
+            pre_grasp_offset_pos = to_torch(
+                                            self.get_approach_offset(-self.cfg["solution"]["pre_grasp_offset"],
+                                                                     device=self.tensor_args.device),
                                             device=self.tensor_args.device, dtype=torch.float)
             pre_grasp_offset_pos = pre_grasp_offset_pos.unsqueeze(dim=0).repeat(self.num_envs, 1)
             pre_grasp_offset_quat = to_torch([1, 0, 0, 0], device=self.tensor_args.device, dtype=torch.float)
@@ -460,8 +505,8 @@ class FetchMeshCurobo(FetchSolutionBase):
             grasp_success.append(result_holder & ik_result.success)
 
             ik = (ik_result.solution * ik_result.success.float().unsqueeze(-1) +
-                  (1. - ik_result.success.float().unsqueeze(-1)) * ik_holder[..., :-2])
-            grasp_pose_ik.append(torch.concat([ik, ik_holder[..., -2:]], dim=-1))
+                  (1. - ik_result.success.float().unsqueeze(-1)) * ik_holder[..., :self.n_arm])
+            grasp_pose_ik.append(torch.concat([ik, ik_holder[..., -self.n_grip:]], dim=-1))
 
         if self.cfg["solution"]["disable_grasp_obj_ik_collision"]:
             self._enable_goal_obj_collision_checking(True)
@@ -504,7 +549,7 @@ class FetchMeshCurobo(FetchSolutionBase):
         trajs, poses, success, results = [], [], [], []
         for i in range(self.num_envs):
             q_start = JointState.from_position(
-                self.states["q"][i:i+1, :-2].clone().to(self.tensor_args.device),
+                self.states["q"][i:i+1, :self.n_arm].clone().to(self.tensor_args.device),
                 joint_names=self.robot_joint_names
             )
 
@@ -560,7 +605,8 @@ class FetchMeshCurobo(FetchSolutionBase):
         eef = self._get_pose_in_robot_frame()['eef']
         eef_pose = Pose(eef['pos'], torch.concatenate([eef['quat'][..., -1:],  eef['quat'][..., :-1]], dim=-1))
 
-        offset_pos = to_torch([0, 0, z], device=self.tensor_args.device, dtype=torch.float)
+        offset_pos = to_torch(self.get_approach_offset(z, device=self.tensor_args.device),
+                              device=self.tensor_args.device, dtype=torch.float)
         offset_pos = offset_pos.unsqueeze(dim=0).repeat(self.num_envs, 1)
         offset_quat = to_torch([1, 0, 0, 0], device=self.tensor_args.device, dtype=torch.float)
         offset_quat = offset_quat.unsqueeze(dim=0).repeat(self.num_envs, 1)
@@ -578,8 +624,8 @@ class FetchMeshCurobo(FetchSolutionBase):
 
     def motion_gen_to_free_space(self, mask):
 
-        target_pos = to_torch([[[-0.2, -0.25, 0.66], [-0.2, 0.25, 0.66]]], device=self.tensor_args.device, dtype=torch.float)
-        target_quat = to_torch([[[0, 0.707, -0.707, 0], [0, 0.707, 0.707, 0]]], device=self.tensor_args.device, dtype=torch.float)
+        target_pos = to_torch([self.robot_cfg.free_space_target_positions], device=self.tensor_args.device, dtype=torch.float)
+        target_quat = to_torch([self.robot_cfg.free_space_target_quaternions_wxyz], device=self.tensor_args.device, dtype=torch.float)
         end_pose = Pose(target_pos, target_quat)
 
         target_poses = []
@@ -632,7 +678,7 @@ class FetchMeshCurobo(FetchSolutionBase):
                 target_pose = self.ik_solver.fk(target_state.position).ee_pose
 
                 traj_state = JointState.from_position(
-                    executed_pos[i][..., :-2],
+                    executed_pos[i][..., :self.n_arm],
                     joint_names=self.robot_joint_names
                 )
                 traj_pose = self.ik_solver.fk(traj_state.position).ee_pose
@@ -641,7 +687,7 @@ class FetchMeshCurobo(FetchSolutionBase):
                 plot_trajs([
                     [traj.position.cpu().numpy(), traj.velocity.cpu().numpy()],
                     [executed_pos[i].cpu().numpy(), executed_vel[i].cpu().numpy()]
-                ], self.cfg["solution"]["cuRobo"]["motion_interpolation_dt"])
+                ], self.cfg["solution"]["cuRobo"]["motion_interpolation_dt"], n_grip=self.n_grip)
 
                 self.motion_vis_debug(self.motion_generators[i], target_pose, traj_pose)
 
@@ -718,6 +764,7 @@ class FetchMeshCurobo(FetchSolutionBase):
 
             ik_success = ik_result['grasp_success'] & ik_result['pre_grasp_success']
             log['ik_plan_success'] = ik_success.any(dim=-1).cpu().numpy()
+
             start_time = time.time()
             traj, success, poses, results = self.motion_gen_to_grasp_pose(ik_result["pre_grasp_poses"], mask=ik_success)
             print("Pre Grasp Plan", success)
@@ -749,8 +796,8 @@ class FetchMeshCurobo(FetchSolutionBase):
                 print("Grasp Phase End")
 
             elif self.cfg["solution"]["move_offset_method"] == 'cartesian_linear':
-                offset = np.array([0, 0, self.cfg["solution"]["pre_grasp_offset"] *
-                                   self.cfg["solution"]["grasp_overshoot_ratio"]])
+                approach = np.array(self.robot_cfg.eef_approach_axis)
+                offset = approach * (self.cfg["solution"]["pre_grasp_offset"] * self.cfg["solution"]["grasp_overshoot_ratio"])
                 self.follow_cartesian_linear_motion(offset, gripper_state=0)
         print("Grasp Phase End")
 
@@ -997,7 +1044,7 @@ def create_gripper_marker(color=[0, 0, 255], tube_radius=0.001, sections=6):
     return tmp
 
 
-def plot_trajs(trajs, dt):
+def plot_trajs(trajs, dt, n_grip=2):
     # Third Party
     import matplotlib.pyplot as plt
 
@@ -1017,11 +1064,11 @@ def plot_trajs(trajs, dt):
         else:
             linestyle = '--'
             timesteps = [i * dt for i in range(q.shape[0])]
-            for i in range(q.shape[-1] - 2):
+            for i in range(q.shape[-1] - n_grip):
                 axs[0].plot(timesteps, q[:, i], label=str(i), linestyle=linestyle)
                 axs[1].plot(timesteps, qd[:, i], label=str(i), linestyle=linestyle)
 
-            for i in range(q.shape[-1] - 2, q.shape[-1]):
+            for i in range(q.shape[-1] - n_grip, q.shape[-1]):
                 axs[0].plot(timesteps, q[:, i] * 50, label=str(i), linestyle=linestyle)
                 axs[1].plot(timesteps, qd[:, i] * 50, label=str(i), linestyle=linestyle)
 

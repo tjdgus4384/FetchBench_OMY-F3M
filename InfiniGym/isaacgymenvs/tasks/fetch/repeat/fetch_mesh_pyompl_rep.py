@@ -86,8 +86,8 @@ class FetchMeshPyomplRep(FetchMeshPyompl):
                 print("Pre Grasp Phase End")
                 log['pre_grasp_execute_error'] = self.get_end_effect_error(poses)
 
-                offset = np.array([0, 0, self.cfg["solution"]["pre_grasp_offset"] *
-                                   self.cfg["solution"]["grasp_overshoot_ratio"]])
+                approach = np.array(self.robot_cfg.eef_approach_axis)
+                offset = approach * (self.cfg["solution"]["pre_grasp_offset"] * self.cfg["solution"]["grasp_overshoot_ratio"])
                 self.follow_cartesian_linear_motion(offset, gripper_state=0)
 
             print("Grasp Phase End")

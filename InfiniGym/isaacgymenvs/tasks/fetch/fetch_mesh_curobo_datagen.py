@@ -214,7 +214,7 @@ class FetchCuroboDataGen(FetchMeshCurobo, FetchPointCloudBase):
                 target_pose = self.ik_solver.fk(target_state.position).ee_pose
 
                 traj_state = JointState.from_position(
-                    executed_pos[i][..., :-2],
+                    executed_pos[i][..., :self.n_arm],
                     joint_names=self.robot_joint_names
                 )
                 traj_pose = self.ik_solver.fk(traj_state.position).ee_pose
@@ -223,7 +223,7 @@ class FetchCuroboDataGen(FetchMeshCurobo, FetchPointCloudBase):
                 plot_trajs([
                     [traj.position.cpu().numpy(), traj.velocity.cpu().numpy()],
                     [executed_pos[i].cpu().numpy(), executed_vel[i].cpu().numpy()]
-                ], self.cfg["solution"]["cuRobo"]["motion_interpolation_dt"])
+                ], self.cfg["solution"]["cuRobo"]["motion_interpolation_dt"], n_grip=self.n_grip)
 
                 self.motion_vis_debug(self.motion_generators[i], target_pose, traj_pose)
 
@@ -326,7 +326,7 @@ class FetchCuroboDataGen(FetchMeshCurobo, FetchPointCloudBase):
 
         curr_states = self.states["q"].clone()
         grasp_command = {
-            "joint_state": curr_states[:, :-2],
+            "joint_state": curr_states[:, :self.n_arm],
             "gripper_state": - torch.ones((self.num_envs,), device=self.device, dtype=torch.float)
         }
 
@@ -355,9 +355,9 @@ class FetchCuroboDataGen(FetchMeshCurobo, FetchPointCloudBase):
 
                 for rel in contact_list:
                     goal_obj = f'obj_{self.task_obj_index[i][self.get_task_idx()]}'
-                    if ('leftfinger' in rel[0] and goal_obj == rel[1]) or ('leftfinger' in rel[1] and goal_obj == rel[0]):
+                    if (self.robot_cfg.left_finger_contact_substr in rel[0] and goal_obj == rel[1]) or (self.robot_cfg.left_finger_contact_substr in rel[1] and goal_obj == rel[0]):
                         l = True
-                    if ('rightfinger' in rel[0] and goal_obj == rel[1]) or ('rightfinger' in rel[1] and goal_obj == rel[0]):
+                    if (self.robot_cfg.right_finger_contact_substr in rel[0] and goal_obj == rel[1]) or (self.robot_cfg.right_finger_contact_substr in rel[1] and goal_obj == rel[0]):
                         r = True
                 leftfinger_contact.append(l)
                 rightfinger_contact.append(r)
@@ -384,7 +384,7 @@ class FetchCuroboDataGen(FetchMeshCurobo, FetchPointCloudBase):
             rand_n = torch.randn(*pos.shape, device=pos.device) * 0.01
             pos = tensor_clamp(pos + rand_n, self.robot_dof_lower_limits, self.robot_dof_upper_limits)
 
-            pos[:, -2:] = self.robot_default_dof_pos[-2:]
+            pos[:, -self.n_grip:] = self.robot_default_dof_pos[-self.n_grip:]
 
         # Reset the internal obs accordingly
         self._q[env_ids, :] = pos
@@ -488,8 +488,8 @@ class FetchCuroboDataGen(FetchMeshCurobo, FetchPointCloudBase):
                     traj_log['grasp_traj'] = self.follow_motion_trajs(traj, gripper_state=0)  # 0 means no movement
 
                 elif self.cfg["solution"]["move_offset_method"] == 'cartesian_linear':
-                    offset = np.array([0, 0, self.cfg["solution"]["pre_grasp_offset"] *
-                                       self.cfg["solution"]["grasp_overshoot_ratio"]])
+                    approach = np.array(self.robot_cfg.eef_approach_axis)
+                    offset = approach * (self.cfg["solution"]["pre_grasp_offset"] * self.cfg["solution"]["grasp_overshoot_ratio"])
 
                     traj_log['grasp_pose'] = ik_result['grasp_poses'][:, idx].get_numpy_matrix()[0]
                     traj_log['grasp_traj'] = self.follow_cartesian_linear_motion(offset, gripper_state=0)
@@ -556,7 +556,7 @@ class FetchCuroboDataGen(FetchMeshCurobo, FetchPointCloudBase):
             while s < max_traj_steps:
                 ns = min(s + self.cfg["solution"]["log_traj_frame_skip"], max_traj_steps)
                 for _ in range(60):
-                    delta_q = np.linalg.norm(traj[ns]['dof_state'][:-2, 0] - traj[s]['dof_state'][:-2, 0], axis=-1)
+                    delta_q = np.linalg.norm(traj[ns]['dof_state'][:self.n_arm, 0] - traj[s]['dof_state'][:self.n_arm, 0], axis=-1)
                     if delta_q < self.cfg["solution"]["log_traj_min_delta_skip"]:
                         ns = min(ns + 1, max_traj_steps)
 

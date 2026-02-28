@@ -82,7 +82,7 @@ def matrix_to_q_t(mtx):
 
 
 class CuRoboIKGraspChecker(object):
-    def __init__(self, scene_path, max_pose_seed, debug_vis=False):
+    def __init__(self, scene_path, max_pose_seed, debug_vis=False, curobo_config_name="franka.yml"):
         self.loader = InfiniSceneLoader(scene_path)
         self.loader.load_env_config()
 
@@ -99,6 +99,7 @@ class CuRoboIKGraspChecker(object):
 
         self._max_pose_seed = max_pose_seed
         self.debug_vis = debug_vis
+        self._curobo_config_name = curobo_config_name
 
         ik_config = IKSolverConfig.load_from_robot_config(
             self._get_cuRobo_robot_config(),
@@ -136,7 +137,7 @@ class CuRoboIKGraspChecker(object):
             self.task_obj_assets.append(asset)
 
     def _get_cuRobo_robot_config(self):
-        robot_config = load_yaml(join_path(get_robot_configs_path(), "franka.yml"))["robot_cfg"]
+        robot_config = load_yaml(join_path(get_robot_configs_path(), self._curobo_config_name))["robot_cfg"]
         robot_cuRobo_cfg = RobotConfig.from_dict(robot_config)
 
         return robot_cuRobo_cfg

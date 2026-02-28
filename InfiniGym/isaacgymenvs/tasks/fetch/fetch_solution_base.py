@@ -33,7 +33,7 @@ class FetchSolutionBase(FetchBase):
         # curr state
         curr_states = self.states["q"].clone()
         grasp_command = {
-            "joint_state": curr_states[:, :-2],
+            "joint_state": curr_states[:, :self.n_arm],
             "gripper_state": - torch.ones((self.num_envs,), device=self.device, dtype=torch.float)
         }
 
@@ -126,7 +126,7 @@ class FetchSolutionBase(FetchBase):
 
         curr_states = self.states["q"].clone()
         grasp_command = {
-            "joint_state": curr_states[:, :-2],
+            "joint_state": curr_states[:, :self.n_arm],
             "gripper_state": torch.ones((self.num_envs,), device=self.device, dtype=torch.float)
         }
 
@@ -145,7 +145,7 @@ class FetchSolutionBase(FetchBase):
 
         curr_states = self.states["q"].clone()
         grasp_command = {
-            "joint_state": curr_states[:, :-2],
+            "joint_state": curr_states[:, :self.n_arm],
             "gripper_state": - torch.ones((self.num_envs,), device=self.device, dtype=torch.float)
         }
 
@@ -173,9 +173,9 @@ class FetchSolutionBase(FetchBase):
 
                 for rel in contact_list:
                     goal_obj = f'obj_{self.task_obj_index[i][self.get_task_idx()]}'
-                    if ('leftfinger' in rel[0] and goal_obj == rel[1]) or ('leftfinger' in rel[1] and goal_obj == rel[0]):
+                    if (self.robot_cfg.left_finger_contact_substr in rel[0] and goal_obj == rel[1]) or (self.robot_cfg.left_finger_contact_substr in rel[1] and goal_obj == rel[0]):
                         l = True
-                    if ('rightfinger' in rel[0] and goal_obj == rel[1]) or ('rightfinger' in rel[1] and goal_obj == rel[0]):
+                    if (self.robot_cfg.right_finger_contact_substr in rel[0] and goal_obj == rel[1]) or (self.robot_cfg.right_finger_contact_substr in rel[1] and goal_obj == rel[0]):
                         r = True
                 leftfinger_contact.append(l)
                 rightfinger_contact.append(r)

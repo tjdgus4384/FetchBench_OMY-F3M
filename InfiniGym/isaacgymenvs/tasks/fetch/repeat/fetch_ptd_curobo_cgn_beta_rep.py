@@ -20,7 +20,7 @@ class FetchPtdCuroboCGNBetaRep(FetchPtdCuroboCGNBeta):
         self.num_max_trials = self.cfg["solution"]["num_max_trials"]
 
         state = self.motion_generators[0].compute_kinematics(
-            JointState.from_position(self.robot_default_dof_pos.to(self.tensor_args.device).view(1, -1)[:, :-2])
+            JointState.from_position(self.robot_default_dof_pos.to(self.tensor_args.device).view(1, -1)[:, :self.n_arm])
         )
 
         self.retract_pose = Pose(position=state.ee_pos_seq, quaternion=state.ee_quat_seq).clone()
@@ -90,8 +90,8 @@ class FetchPtdCuroboCGNBetaRep(FetchPtdCuroboCGNBeta):
 
                 self.follow_motion_trajs(traj, gripper_state=0)  # 0 means no movement
             elif self.cfg["solution"]["move_offset_method"] == 'cartesian_linear':
-                offset = np.array([0, 0, self.cfg["solution"]["pre_grasp_offset"] *
-                                       self.cfg["solution"]["grasp_overshoot_ratio"]])
+                approach = np.array(self.robot_cfg.eef_approach_axis)
+                offset = approach * (self.cfg["solution"]["pre_grasp_offset"] * self.cfg["solution"]["grasp_overshoot_ratio"])
                 self.follow_cartesian_linear_motion(offset, gripper_state=0)
             else:
                 raise NotImplementedError

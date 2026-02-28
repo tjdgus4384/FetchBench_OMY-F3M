@@ -27,7 +27,7 @@ class FetchPtdPyompl(FetchPointCloudBase, FetchSolutionBase):
         # Multiple Pybullet Server may cause error
 
         self.motion_generator = [
-            PyBulletOMPLPCD(self.cfg["solution"]["pyompl"], self.debug_viz) for i in range(self.num_envs)
+            PyBulletOMPLPCD(self.cfg["solution"]["pyompl"], self.debug_viz, robot_cfg=self.robot_cfg) for i in range(self.num_envs)
         ]
 
     """
@@ -67,7 +67,7 @@ class FetchPtdPyompl(FetchPointCloudBase, FetchSolutionBase):
 
         for i, tr in enumerate(trajs):
             if tr is None:
-                halt_state = self.states["q"][i:i+1][..., :-2].clone()
+                halt_state = self.states["q"][i:i+1][..., :self.n_arm].clone()
                 new_pos = torch.ones((max_len, *halt_state.shape[1:]), device=halt_state.device, dtype=halt_state.dtype) * halt_state
                 padded_trajs.append(new_pos)
 
@@ -157,11 +157,14 @@ class FetchPtdPyompl(FetchPointCloudBase, FetchSolutionBase):
         for i in range(self.num_envs):
             grasp_candidate = annotated_grasp_pose[i, :]
             Ts, success = self.motion_generator[i].check_collision_free_grasps(grasp_candidate)
-            grasp_poses.append(Ts)
             grasp_success.append(success)
 
-            offset_matrix = tr.translation_matrix([0, 0, -self.cfg["solution"]["pre_grasp_offset"]])
-            pre_grasp_poses.append(Ts @ np.expand_dims(offset_matrix, axis=0))
+            offset_matrix = tr.translation_matrix(
+                (np.array(self.robot_cfg.eef_approach_axis) * -self.cfg["solution"]["pre_grasp_offset"]).tolist())
+            pre_grasp = Ts @ np.expand_dims(offset_matrix, axis=0)
+
+            grasp_poses.append(Ts)
+            pre_grasp_poses.append(pre_grasp)
 
         res = {
             'grasp_poses': grasp_poses,
@@ -187,7 +190,7 @@ class FetchPtdPyompl(FetchPointCloudBase, FetchSolutionBase):
 
         trajs, poses, success = [], [], []
         for i in range(self.num_envs):
-            q_start = self.states["q"][i, :-2].cpu().numpy()
+            q_start = self.states["q"][i, :self.n_arm].cpu().numpy()
 
             # get success mask
             if target_poses[i] is None:
@@ -233,7 +236,8 @@ class FetchPtdPyompl(FetchPointCloudBase, FetchSolutionBase):
             if m:
                 trans = tr.translation_matrix(eef['pos'][i].numpy())
                 rot = tr.quaternion_matrix(eq[i].numpy())
-                offset = tr.translation_matrix([0, 0, z])
+                offset = tr.translation_matrix(
+                    (np.array(self.robot_cfg.eef_approach_axis) * z).tolist())
                 pose = trans @ rot @ offset
                 target_poses.append(np.expand_dims(pose, axis=0))
             else:
@@ -243,8 +247,8 @@ class FetchPtdPyompl(FetchPointCloudBase, FetchSolutionBase):
 
     def motion_gen_to_free_space(self, mask):
 
-        target_pos = [[-0.2, -0.25, 0.66], [-0.2, 0.25, 0.66]]
-        target_quat = [[0, 0.707, -0.707, 0], [0, 0.707, 0.707, 0]]
+        target_pos = self.robot_cfg.free_space_target_positions
+        target_quat = self.robot_cfg.free_space_target_quaternions_wxyz
 
         end_poses = []
         for t in range(len(target_quat)):
@@ -302,7 +306,7 @@ class FetchPtdPyompl(FetchPointCloudBase, FetchSolutionBase):
                 plot_trajs([
                     [traj.cpu().numpy(), torch.zeros_like(traj).cpu().numpy()],
                     [executed_pos[i].cpu().numpy(), executed_vel[i].cpu().numpy()]
-                ], 0.015)
+                ], 0.015, n_grip=self.n_grip)
 
     """
     Get Control Error
@@ -373,8 +377,8 @@ class FetchPtdPyompl(FetchPointCloudBase, FetchSolutionBase):
             # Todo: Update this with Curobo
 
         elif self.cfg["solution"]["move_offset_method"] == 'cartesian_linear':
-            offset = np.array([0, 0, self.cfg["solution"]["pre_grasp_offset"] *
-                                   self.cfg["solution"]["grasp_overshoot_ratio"]])
+            approach = np.array(self.robot_cfg.eef_approach_axis)
+            offset = approach * (self.cfg["solution"]["pre_grasp_offset"] * self.cfg["solution"]["grasp_overshoot_ratio"])
             self.follow_cartesian_linear_motion(offset, gripper_state=0)
         else:
             raise NotImplementedError

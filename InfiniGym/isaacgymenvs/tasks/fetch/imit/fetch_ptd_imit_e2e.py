@@ -24,7 +24,7 @@ class FetchPtdImitE2E(FetchPtdImitBase):
     Action
     """
     def _get_gripper_state(self):
-        dist = self.states['q'][:, -2:].sum(dim=-1).cpu().numpy()[0]
+        dist = self.states['q'][:, -self.n_grip:].sum(dim=-1).cpu().numpy()[0]
         if dist > 0.075:
             return 'open'
         elif dist < 0.002:
@@ -52,8 +52,8 @@ class FetchPtdImitE2E(FetchPtdImitBase):
                 'eef_quat': actions[:, 3:-1],
             }
         elif self._control_type == 'joint':
-            joint_cmd = torch.clamp(actions[:, :-1], self.robot_dof_lower_limits[:-2].unsqueeze(0),
-                                    self.robot_dof_upper_limits[:-2].unsqueeze(0))
+            joint_cmd = torch.clamp(actions[:, :-1], self.robot_dof_lower_limits[:self.n_arm].unsqueeze(0),
+                                    self.robot_dof_upper_limits[:self.n_arm].unsqueeze(0))
             command = {"joint_state": joint_cmd}
         else:
             raise NotImplementedError

@@ -72,7 +72,8 @@ class FetchMeshPyomplPtdCGNBeta(FetchMeshPyompl, FetchPointCloudBase):
             robot_world_pose = self.get_robot_world_matrix(env_idx).reshape(1, 4, 4)
             grasp_in_robot = robot_world_pose @ grasp_in_world @ grasp_command_offset
 
-            pre_grasp_offset_pos = trimesh.transformations.translation_matrix([0, 0, -self.cfg["solution"]["pre_grasp_offset"]])
+            pre_grasp_offset_pos = trimesh.transformations.translation_matrix(
+                (np.array(self.robot_cfg.eef_approach_axis) * -self.cfg["solution"]["pre_grasp_offset"]).tolist())
             pre_grasp_pose = grasp_in_robot @ pre_grasp_offset_pos.reshape(1, 4, 4)
 
             grasp_lst = self.get_grasp_masks(cgn_pred[env_idx]['scores'][1])
@@ -171,8 +172,8 @@ class FetchMeshPyomplPtdCGNBeta(FetchMeshPyompl, FetchPointCloudBase):
             print("Pre Grasp Phase End")
             log['pre_grasp_execute_error'] = self.get_end_effect_error(poses)
 
-            offset = np.array([0, 0, self.cfg["solution"]["pre_grasp_offset"] *
-                               self.cfg["solution"]["grasp_overshoot_ratio"]])
+            approach = np.array(self.robot_cfg.eef_approach_axis)
+            offset = approach * (self.cfg["solution"]["pre_grasp_offset"] * self.cfg["solution"]["grasp_overshoot_ratio"])
             self.follow_cartesian_linear_motion(offset, gripper_state=0)
 
         print("Grasp Phase End")

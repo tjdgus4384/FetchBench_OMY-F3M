@@ -67,8 +67,8 @@ class FetchPtdImitCuroboCGN(FetchPtdImitTwoStage, FetchPtdCuroboCGNBeta):
 
             self.follow_motion_trajs(traj, gripper_state=0)  # 0 means no movement
         elif self.cfg["solution"]["move_offset_method"] == 'cartesian_linear':
-            offset = np.array([0, 0, self.cfg["solution"]["pre_grasp_offset"] *
-                                   self.cfg["solution"]["grasp_overshoot_ratio"]])
+            approach = np.array(self.robot_cfg.eef_approach_axis)
+            offset = approach * (self.cfg["solution"]["pre_grasp_offset"] * self.cfg["solution"]["grasp_overshoot_ratio"])
             self.follow_cartesian_linear_motion(offset, gripper_state=0)
         else:
             raise NotImplementedError

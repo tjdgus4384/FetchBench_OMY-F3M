@@ -36,8 +36,10 @@ np.set_printoptions(suppress=True)
 
 
 class CuroboIK(object):
-    def __init__(self, cfg):
+    def __init__(self, cfg, robot_cfg=None):
         self.cfg = cfg
+        self._curobo_config_name = robot_cfg.curobo_config_name if robot_cfg is not None else "franka_r3.yml"
+        self._num_arm_dofs = robot_cfg.num_arm_dofs if robot_cfg is not None else 7
         self.tensor_args = TensorDeviceType()
         ik_config = IKSolverConfig.load_from_robot_config(
             self._get_cuRobo_robot_config(),
@@ -54,7 +56,7 @@ class CuroboIK(object):
         self.ik_solver = IKSolver(ik_config)
 
     def _get_cuRobo_robot_config(self):
-        robot_config = load_yaml(join_path(get_robot_configs_path(), "franka_r3.yml"))["robot_cfg"]
+        robot_config = load_yaml(join_path(get_robot_configs_path(), self._curobo_config_name))["robot_cfg"]
         robot_cuRobo_cfg = RobotConfig.from_dict(robot_config)
 
         return robot_cuRobo_cfg
@@ -68,7 +70,7 @@ class CuroboIK(object):
         ik_result = self.ik_solver.solve(ik_pose)
 
         if bool(ik_result.success.reshape(-1).cpu().numpy()):
-            return ik_result.solution[:7].cpu().numpy().reshape(-1)
+            return ik_result.solution[:self._num_arm_dofs].cpu().numpy().reshape(-1)
 
         return None
 
@@ -88,6 +90,7 @@ class MPPIPolicy:
         device=0,
         log_file=None,
         ik_kwargs={},
+        robot_cfg=None,
         **kwargs
     ):
         """
@@ -117,12 +120,17 @@ class MPPIPolicy:
         self.transition_threshold = transition_threshold
         self.device = device
 
-        self.ik_proc = CuroboIK(ik_kwargs)
+        self.robot_cfg = robot_cfg
+        self._num_arm_dofs = robot_cfg.num_arm_dofs if robot_cfg is not None else 7
+        self._num_gripper_dofs = robot_cfg.num_gripper_dofs if robot_cfg is not None else 2
+        self.ik_proc = CuroboIK(ik_kwargs, robot_cfg=robot_cfg)
 
         CODE_PATH = '../third_party'
+        mppi_urdf = kwargs.get("mppi_urdf", f"{CODE_PATH}/SceneCollisionNet/data/panda/panda.urdf")
+        mppi_ee_link = kwargs.get("mppi_ee_link", "right_gripper")
         self.robot = Robot(
-            f"{CODE_PATH}/SceneCollisionNet/data/panda/panda.urdf",
-            "right_gripper",  # same as panda_hand
+            mppi_urdf,
+            mppi_ee_link,
             device=device,
         )
 
@@ -138,8 +146,12 @@ class MPPIPolicy:
             self.self_collision_checker.set_allowed_collisions(
                 self.robot.links[i].name, self.robot.links[i + 1].name
             )
-        self.self_collision_checker.set_allowed_collisions("panda_hand", "panda_rightfinger")
-        self.self_collision_checker.set_allowed_collisions( "panda_link7", "panda_hand")
+        # Set allowed collisions for EEF-finger and last arm link-EEF pairs
+        eef_name = robot_cfg.eef_link_name if robot_cfg is not None else "panda_hand"
+        right_finger_name = robot_cfg.right_finger_link_name if robot_cfg is not None else "panda_rightfinger"
+        last_arm_link = robot_cfg.arm_joint_names[-1].replace("_joint", "_link") if robot_cfg is not None else "panda_link7"
+        self.self_collision_checker.set_allowed_collisions(eef_name, right_finger_name)
+        self.self_collision_checker.set_allowed_collisions(last_arm_link, eef_name)
 
         if scene_coll_nn == 'FCL':
             self.scene_collision_checker = FCLMultiSceneCollisionChecker(self.robot, use_scene_pc=True)
@@ -271,8 +283,8 @@ class MPPIPolicy:
                 )
             )
         distance = torch.norm(
-            qs[..., None, :7]
-            - torch.from_numpy(self.ik_cur_grasps_init[:, :7]).to(self.device),
+            qs[..., None, :self._num_arm_dofs]
+            - torch.from_numpy(self.ik_cur_grasps_init[:, :self._num_arm_dofs]).to(self.device),
             dim=-1,
         )
         output = torch.min(distance, dim=-1)
@@ -339,7 +351,7 @@ class MPPIPolicy:
         rollouts = torch.min(rollouts, self.robot.max_joints)
 
         # Set fingers to open or closed depending on desired cfg
-        rollouts[..., -2:] = closest_g_q[0, -2:]
+        rollouts[..., -self._num_gripper_dofs:] = closest_g_q[0, -self._num_gripper_dofs:]
         rewards = self._compute_batch_reward(rollouts)[0]
         return rollouts, rewards
 
@@ -478,8 +490,8 @@ class MPPIPolicy:
             self.reset()
             return None
 
-        # add additional 2 joints
-        gripper_joint = np.ones((len(cfree_ik_cur_grasps_init), 2), dtype=np.float32) * 0.04
+        # add additional gripper joints
+        gripper_joint = np.ones((len(cfree_ik_cur_grasps_init), self._num_gripper_dofs), dtype=np.float32) * 0.04
         cfree_ik_cur_grasps_init = np.concatenate([cfree_ik_cur_grasps_init, gripper_joint], axis=-1)
         cfree_ik_cur_grasps_final = np.concatenate([cfree_ik_cur_grasps_final, gripper_joint], axis=-1)
 
@@ -528,8 +540,8 @@ class MPPIPolicy:
         self.cur_grasps_final = cfree_cur_grasps_final
         self.ik_cur_grasps_init = cfree_ik_cur_grasps_init
         self.ik_cur_grasps_final = cfree_ik_cur_grasps_final
-        self.ik_cur_grasps_init[:, -2:] = 0.04  # Set fingers open
-        self.ik_cur_grasps_final[:, -2:] = 0.04
+        self.ik_cur_grasps_init[:, -self._num_gripper_dofs:] = 0.04  # Set fingers open
+        self.ik_cur_grasps_final[:, -self._num_gripper_dofs:] = 0.04
 
         return len(self.ik_cur_grasps_init)
 
@@ -611,7 +623,7 @@ class MPPIPolicy:
         self.logger.debug(
             "Joint Dist to Target: {:.4f}".format(
                 np.linalg.norm(
-                    self.robot_q[:7] - self.ik_cur_grasps_init[:, :7],
+                    self.robot_q[:self._num_arm_dofs] - self.ik_cur_grasps_init[:, :self._num_arm_dofs],
                     ord=np.inf,
                     axis=-1,
                 ).min()

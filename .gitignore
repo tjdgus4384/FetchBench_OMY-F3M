@@ -10,3 +10,13 @@ InfiniGym/runs
 InfiniGym/logs
 InfiniGym/videos
 
+# Large data assets (download separately)
+Task/
+benchmark_objects/
+benchmark_scenes/
+InfiniGym/core
+
+# Claude Code
+.claude/
+InfiniGym/.claude/
+

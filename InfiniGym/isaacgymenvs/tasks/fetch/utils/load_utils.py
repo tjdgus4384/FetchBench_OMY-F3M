@@ -11,6 +11,14 @@ ASSET_PATH = os.environ["ASSET_PATH"]
 SCENE_PATH = f"{ASSET_PATH}/Task"
 
 
+def get_robot_asset_path(robot_cfg):
+    """Return asset paths for any robot using its RobotConfig."""
+    return {
+        'asset_root': './assets',
+        'urdf_file': robot_cfg.urdf_file,
+    }
+
+
 def get_franka_panda_asset(type='franka_r3', mode='ws'):
     if mode == 'ws':
         paths = {

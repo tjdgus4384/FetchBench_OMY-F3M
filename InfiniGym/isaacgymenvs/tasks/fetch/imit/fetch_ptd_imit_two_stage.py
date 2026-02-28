@@ -51,14 +51,14 @@ class FetchPtdImitTwoStage(FetchPtdImitBase):
             }
         elif self._control_type == 'joint':
 
-            curr_state = self.states["q"][:, :-2].clone()
+            curr_state = self.states["q"][:, :self.n_arm].clone()
             input_action = actions[:, :-1]
 
             task_status = self._task_cmd_status.float().reshape(-1, 1)
             joint_cmd = curr_state * (1. - task_status) + input_action * task_status
 
-            joint_cmd = torch.clamp(joint_cmd, self.robot_dof_lower_limits[:-2].unsqueeze(0),
-                                    self.robot_dof_upper_limits[:-2].unsqueeze(0))
+            joint_cmd = torch.clamp(joint_cmd, self.robot_dof_lower_limits[:self.n_arm].unsqueeze(0),
+                                    self.robot_dof_upper_limits[:self.n_arm].unsqueeze(0))
             command = {"joint_state": joint_cmd}
         else:
             raise NotImplementedError

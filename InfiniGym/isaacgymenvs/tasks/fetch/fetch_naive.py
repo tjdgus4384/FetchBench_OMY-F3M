@@ -43,8 +43,8 @@ class FetchNaive(FetchBase):
     def repeat(self):
         # curr state
         q = self.states["q"].clone()
-        self._arm_control = q[:, :-2]
-        self._gripper_control = q[:, -2:]
+        self._arm_control = q[:, :self.n_arm]
+        self._gripper_control = q[:, self.n_arm:]
 
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self._pos_control))
 

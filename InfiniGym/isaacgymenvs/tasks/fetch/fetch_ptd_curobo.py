@@ -141,7 +141,7 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
 
         for i, tr in enumerate(trajs):
             if tr is None:
-                halt_state = self.states["q"][i:i+1][..., :-2].clone().to(self.tensor_args.device)
+                halt_state = self.states["q"][i:i+1][..., :self.n_arm].clone().to(self.tensor_args.device)
 
                 new_pos = torch.ones((max_len, *halt_state.shape[1:]), device=halt_state.device, dtype=halt_state.dtype) * halt_state
                 new_vel = torch.zeros((max_len, *halt_state.shape[1:]), device=halt_state.device, dtype=halt_state.dtype)
@@ -206,7 +206,7 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
         return padded_trajs
 
     def _get_cuRobo_robot_config(self):
-        robot_config = load_yaml(join_path(get_robot_configs_path(), "franka_r3.yml"))["robot_cfg"]
+        robot_config = load_yaml(join_path(get_robot_configs_path(), self.robot_cfg.curobo_config_name))["robot_cfg"]
         robot_cuRobo_cfg = RobotConfig.from_dict(robot_config)
         robot_cuRobo_cfg.cspace.velocity_scale *= self.cfg['solution']['cuRobo']['velocity_scale']
         robot_cuRobo_cfg.cspace.acceleration_scale *= self.cfg['solution']['cuRobo']['acceleration_scale']
@@ -356,17 +356,18 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
                     continue
 
                 cu_js = JointState(
-                    position=q[i, :-2],
-                    velocity=qd[i, :-2],
-                    acceleration=q[i, :-2] * 0.0,
-                    jerk=q[i, :-2] * 0.0,
+                    position=q[i, :self.n_arm],
+                    velocity=qd[i, :self.n_arm],
+                    acceleration=q[i, :self.n_arm] * 0.0,
+                    jerk=q[i, :self.n_arm] * 0.0,
                     joint_names=self.robot_joint_names
                 )
 
                 # setup attached_object pre_transform pose
                 ee_pose_inv = self.motion_generators[i].compute_kinematics(cu_js).ee_pose.inverse()
 
-                offset_pos = to_torch([[0.0, 0.0, self.cfg["solution"]["cuRobo"]["attach_object_z_offset"]]],
+                offset_pos = to_torch([self.get_approach_offset(self.cfg["solution"]["cuRobo"]["attach_object_z_offset"],
+                                                               device=self.tensor_args.device)],
                                       device=self.tensor_args.device, dtype=torch.float)
                 offset_quat = to_torch([[1.0, 0.0, 0.0, 0.0]], device=self.tensor_args.device, dtype=torch.float)
                 offset_pose = Pose(offset_pos.repeat(self.num_envs, 1), offset_quat.repeat(self.num_envs, 1))
@@ -389,10 +390,10 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
         if self.debug_viz and self.viewer is not None:
             for i in range(self.num_envs):
                 cu_js = JointState(
-                    position=q[i, :-2],
-                    velocity=qd[i, :-2],
-                    acceleration=q[i, :-2] * 0.0,
-                    jerk=q[i, :-2] * 0.0,
+                    position=q[i, :self.n_arm],
+                    velocity=qd[i, :self.n_arm],
+                    acceleration=q[i, :self.n_arm] * 0.0,
+                    jerk=q[i, :self.n_arm] * 0.0,
                     joint_names=self.robot_joint_names
                 )
 
@@ -455,7 +456,9 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
         for i in range(annotated_grasp_pose.shape[1]):
             grasp_candidate = annotated_grasp_pose[:, i]
             grasp_pose = Pose(grasp_candidate[..., :3], grasp_candidate[..., 3:7])
-            pre_grasp_offset_pos = to_torch([0, 0, -self.cfg["solution"]["pre_grasp_offset"]],
+            pre_grasp_offset_pos = to_torch(
+                                            self.get_approach_offset(-self.cfg["solution"]["pre_grasp_offset"],
+                                                                     device=self.tensor_args.device),
                                             device=self.tensor_args.device, dtype=torch.float)
             pre_grasp_offset_pos = pre_grasp_offset_pos.unsqueeze(dim=0).repeat(self.num_envs, 1)
             pre_grasp_offset_quat = to_torch([1, 0, 0, 0], device=self.tensor_args.device, dtype=torch.float)
@@ -496,7 +499,7 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
         trajs, poses, success, results = [], [], [], []
         for i in range(self.num_envs):
             q_start = JointState.from_position(
-                self.states["q"][i:i+1, :-2].clone().to(self.tensor_args.device),
+                self.states["q"][i:i+1, :self.n_arm].clone().to(self.tensor_args.device),
                 joint_names=self.robot_joint_names
             )
 
@@ -552,7 +555,8 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
         eef = self._get_pose_in_robot_frame()['eef']
         eef_pose = Pose(eef['pos'], torch.concatenate([eef['quat'][..., -1:],  eef['quat'][..., :-1]], dim=-1))
 
-        offset_pos = to_torch([0, 0, z], device=self.tensor_args.device, dtype=torch.float)
+        offset_pos = to_torch(self.get_approach_offset(z, device=self.tensor_args.device),
+                              device=self.tensor_args.device, dtype=torch.float)
         offset_pos = offset_pos.unsqueeze(dim=0).repeat(self.num_envs, 1)
         offset_quat = to_torch([1, 0, 0, 0], device=self.tensor_args.device, dtype=torch.float)
         offset_quat = offset_quat.unsqueeze(dim=0).repeat(self.num_envs, 1)
@@ -570,8 +574,8 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
 
     def motion_gen_to_free_space(self, mask):
 
-        target_pos = to_torch([[[-0.2, -0.25, 0.66], [-0.2, 0.25, 0.66]]], device=self.tensor_args.device, dtype=torch.float)
-        target_quat = to_torch([[[0, 0.707, -0.707, 0], [0, 0.707, 0.707, 0]]], device=self.tensor_args.device, dtype=torch.float)
+        target_pos = to_torch([self.robot_cfg.free_space_target_positions], device=self.tensor_args.device, dtype=torch.float)
+        target_quat = to_torch([self.robot_cfg.free_space_target_quaternions_wxyz], device=self.tensor_args.device, dtype=torch.float)
         end_pose = Pose(target_pos, target_quat)
 
         target_poses = []
@@ -624,7 +628,7 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
                 target_pose = self.ik_solver.fk(target_state.position).ee_pose
 
                 traj_state = JointState.from_position(
-                    executed_pos[i][..., :-2],
+                    executed_pos[i][..., :self.n_arm],
                     joint_names=self.robot_joint_names
                 )
                 traj_pose = self.ik_solver.fk(traj_state.position).ee_pose
@@ -633,7 +637,7 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
                 plot_trajs([
                     [traj.position.cpu().numpy(), traj.velocity.cpu().numpy()],
                     [executed_pos[i].cpu().numpy(), executed_vel[i].cpu().numpy()]
-                ], self.cfg["solution"]["cuRobo"]["motion_interpolation_dt"])
+                ], self.cfg["solution"]["cuRobo"]["motion_interpolation_dt"], n_grip=self.n_grip)
 
                 self.motion_vis_debug(self.motion_generators[i], target_pose, traj_pose)
 
@@ -722,8 +726,8 @@ class FetchPtdCurobo(FetchPointCloudBase, FetchSolutionBase):
 
         elif self.cfg["solution"]["move_offset_method"] == 'cartesian_linear':
 
-            offset = np.array([0, 0, self.cfg["solution"]["pre_grasp_offset"] *
-                                     self.cfg["solution"]["grasp_overshoot_ratio"]])
+            approach = np.array(self.robot_cfg.eef_approach_axis)
+            offset = approach * (self.cfg["solution"]["pre_grasp_offset"] * self.cfg["solution"]["grasp_overshoot_ratio"])
             self.follow_cartesian_linear_motion(offset, gripper_state=0)
         else:
             raise NotImplementedError

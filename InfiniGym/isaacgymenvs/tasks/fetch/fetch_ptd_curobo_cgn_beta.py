@@ -61,7 +61,7 @@ class FetchPtdCuroboCGNBeta(FetchPtdCurobo):
         self._refresh()
 
         q_start = JointState.from_position(
-            self.states["q"][env_idx:env_idx+1, :-2].clone().to(self.tensor_args.device),
+            self.states["q"][env_idx:env_idx+1, :self.n_arm].clone().to(self.tensor_args.device),
             joint_names=self.robot_joint_names
         )
 
@@ -140,7 +140,9 @@ class FetchPtdCuroboCGNBeta(FetchPtdCurobo):
             grasp_in_robot = robot_world_pose @ grasp_in_world @ grasp_command_offset
 
             grasp_pose = Pose.from_matrix(grasp_in_robot)
-            pre_grasp_offset_pos = to_torch([0, 0, -self.cfg["solution"]["pre_grasp_offset"]],
+            pre_grasp_offset_pos = to_torch(
+                                            self.get_approach_offset(-self.cfg["solution"]["pre_grasp_offset"],
+                                                                     device=self.tensor_args.device),
                                             device=self.tensor_args.device, dtype=torch.float)
             pre_grasp_offset_pos = pre_grasp_offset_pos.unsqueeze(dim=0)
             pre_grasp_offset_quat = to_torch([1, 0, 0, 0], device=self.tensor_args.device, dtype=torch.float)
@@ -226,8 +228,8 @@ class FetchPtdCuroboCGNBeta(FetchPtdCurobo):
 
             self.follow_motion_trajs(traj, gripper_state=0)  # 0 means no movement
         elif self.cfg["solution"]["move_offset_method"] == 'cartesian_linear':
-            offset = np.array([0, 0, self.cfg["solution"]["pre_grasp_offset"] *
-                                   self.cfg["solution"]["grasp_overshoot_ratio"]])
+            approach = np.array(self.robot_cfg.eef_approach_axis)
+            offset = approach * (self.cfg["solution"]["pre_grasp_offset"] * self.cfg["solution"]["grasp_overshoot_ratio"])
             self.follow_cartesian_linear_motion(offset, gripper_state=0)
         else:
             raise NotImplementedError

@@ -56,7 +56,8 @@ class FetchPtdCabinet(FetchPointCloudBase, FetchSolutionBase):
             os.makedirs(self.mppi_log_dir)
 
         self.mppi_policy = MPPIPolicy(device=self.device, ik_kwargs=self.cfg["solution"]["cuRobo"],
-                                      log_file=f'{self.mppi_log_dir}/mppi_log', **self.cfg["solution"]["mppi"])
+                                      log_file=f'{self.mppi_log_dir}/mppi_log', robot_cfg=self.robot_cfg,
+                                      **self.cfg["solution"]["mppi"])
         self.current_plan = []
 
         assert self.arm_control_type == 'joint'
@@ -87,7 +88,7 @@ class FetchPtdCabinet(FetchPointCloudBase, FetchSolutionBase):
         return pose
 
     def _get_cuRobo_robot_config(self):
-        robot_config = load_yaml(join_path(get_robot_configs_path(), "franka_r3.yml"))["robot_cfg"]
+        robot_config = load_yaml(join_path(get_robot_configs_path(), self.robot_cfg.curobo_config_name))["robot_cfg"]
         robot_cuRobo_cfg = RobotConfig.from_dict(robot_config)
 
         return robot_cuRobo_cfg
@@ -225,7 +226,9 @@ class FetchPtdCabinet(FetchPointCloudBase, FetchSolutionBase):
         for i in range(50):
             grasp_candidate = annotated_grasp_pose[:, i]
             grasp_pose = Pose(grasp_candidate[..., :3], grasp_candidate[..., 3:7])
-            pre_grasp_offset_pos = to_torch([0, 0, -self.cfg["solution"]["pre_grasp_offset"]],
+            pre_grasp_offset_pos = to_torch(
+                                            self.get_approach_offset(-self.cfg["solution"]["pre_grasp_offset"],
+                                                                     device=self.tensor_args.device),
                                             device=self.tensor_args.device, dtype=torch.float)
             pre_grasp_offset_pos = pre_grasp_offset_pos.unsqueeze(dim=0).repeat(self.num_envs, 1)
             pre_grasp_offset_quat = to_torch([1, 0, 0, 0], device=self.tensor_args.device, dtype=torch.float)
@@ -324,7 +327,7 @@ class FetchPtdCabinet(FetchPointCloudBase, FetchSolutionBase):
                     self.current_plan_index == len(self.current_plan) - 1
                 )
 
-            delta_q = cur_q[:7] - current_action[:7]
+            delta_q = cur_q[:self.n_arm] - current_action[:self.n_arm]
             delta_q = np.max(np.abs(delta_q))
 
             if super_accurate:
@@ -349,9 +352,9 @@ class FetchPtdCabinet(FetchPointCloudBase, FetchSolutionBase):
     def step_q(self, q, gripper_state):
         # follow the traj
         if q is None:
-            traj_command = {"joint_state": self.states['q'][:, :-2].clone()}
+            traj_command = {"joint_state": self.states['q'][:, :self.n_arm].clone()}
         else:
-            traj_command = {"joint_state": torch.from_numpy(q).to(self.device).unsqueeze(0)[:, :-2]}
+            traj_command = {"joint_state": torch.from_numpy(q).to(self.device).unsqueeze(0)[:, :self.n_arm]}
 
         if gripper_state == 0:
             traj_command['gripper_state'] = None
