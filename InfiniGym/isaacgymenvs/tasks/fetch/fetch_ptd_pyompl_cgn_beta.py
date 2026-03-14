@@ -1,4 +1,4 @@
-
+import isaacgym
 import numpy as np
 import os
 import torch
@@ -25,7 +25,8 @@ class FetchPtdPyomplCGNBeta(FetchPtdPyompl):
             root_dir=CGN_PATH,
             ckpt_dir=f'{CGN_PATH}/checkpoints/'
                      f'{self.cfg["solution"]["cgn"].get("ckpt_name", "contact_graspnet")}',
-            forward_passes=self.cfg["solution"]["cgn"]["num_forward_passes"]
+            forward_passes=self.cfg["solution"]["cgn"]["num_forward_passes"],
+            gripper_depth=self.robot_cfg.cgn_gripper_depth,
         )
         self.cgn_log_dir = f'./logs/cgn_log/{self.cfg["experiment_name"]}'
         if not os.path.exists(self.cgn_log_dir):
@@ -55,7 +56,11 @@ class FetchPtdPyomplCGNBeta(FetchPtdPyompl):
         cgn_pred = self.grasp_net.single_ptd_inference(cgn_input, local_regions=True, filter_grasps=True,
                                                        forward_passes=self.cfg["solution"]["cgn"]["num_forward_passes"])
         grasp_poses, pre_grasp_poses, grasp_successes, grasp_lsts = [], [], [], []
-        grasp_command_offset = np.array([[[0, -1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]])
+        # CGN gripper frame → Franka panda_hand frame (Z-approach)
+        grasp_command_offset = np.array([[[0, -1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]], dtype=np.float32)
+        # Apply robot-specific EEF frame correction (e.g. Franka → OMY-F3M)
+        if self.robot_cfg.grasp_eef_correction is not None:
+            grasp_command_offset = grasp_command_offset @ self.robot_cfg.grasp_eef_correction
 
         for env_idx in range(self.num_envs):
             if len(cgn_pred[env_idx]['grasp_poses'][1]) == 0:

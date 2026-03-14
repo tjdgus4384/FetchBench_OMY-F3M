@@ -15,7 +15,7 @@ CGN_PATH = f'../third_party/contact_graspnet_pytorch'
 
 
 class ContactGraspNet(object):
-    def __init__(self, root_dir, ckpt_dir, forward_passes):
+    def __init__(self, root_dir, ckpt_dir, forward_passes, gripper_depth=0.1034):
         global_config = config_utils.load_config(ckpt_dir, batch_size=forward_passes, arg_configs=[])
         grasp_estimator = GraspEstimator(global_config)
 
@@ -26,6 +26,9 @@ class ContactGraspNet(object):
         except FileExistsError:
             print('No model checkpoint found')
             load_dict = {}
+
+        # Override gripper depth for non-Panda grippers
+        grasp_estimator.model.gripper_depth = gripper_depth
 
         self.grasp_estimator = grasp_estimator
         self.root_path = root_dir

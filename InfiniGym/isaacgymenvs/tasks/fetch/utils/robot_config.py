@@ -47,6 +47,12 @@ class RobotConfig:
     # Franka: Z-axis [0,0,1], OMY: -Y axis [0,-1,0]
     eef_approach_axis: List[float] = field(default_factory=lambda: [0.0, 0.0, 1.0])
 
+    # CGN gripper depth: distance from EEF frame origin to finger contact baseline
+    # along the approach axis (metres). Used by Contact GraspNet to position the
+    # gripper frame relative to predicted contact points.
+    # Franka panda_hand: 0.1034,  OMY end_effector_flange_link: 0.083
+    cgn_gripper_depth: float = 0.1034
+
     # Free-space retract target poses in robot frame (positions + quaternions wxyz).
     # motion_gen_to_free_space uses these to move the robot away after grasping.
     free_space_target_positions: List[List[float]] = field(
@@ -123,18 +129,20 @@ OMY_F3M_CONFIG = RobotConfig(
     gripper_damping=10.0,
     gripper_effort=15.0,
     gripper_velocity=0.9,  # 1.135 rad range / (90 steps * 0.0166s) ≈ 0.76; use 0.9 for margin
+    # RH-P12-RN has revolute fingers so depth varies with grip width:
+    #   80mm opening → 101mm,  60mm → 107mm,  40mm → 110mm
+    # Representative value for CGN's typical 40-80mm prediction range.
+    cgn_gripper_depth=0.105,
     # Franka panda_hand → OMY end_effector_flange_link frame correction:
     #   Rotation: Franka Z (approach) → OMY -Y,  Franka Y (spread) → OMY X
-    #   Translation: pull flange back along Franka approach (Z) by delta to
-    #   compensate for the larger OMY gripper depth (finger center ~0.083m from
-    #   flange) vs Franka (~0.058m from panda_hand).  delta ≈ 0.025 m prevents
-    #   the bulky RH-P12-RN gripper body from colliding with the table surface
-    #   during the cartesian approach phase.
+    #   Translation: depth delta ≈ 0.105 - 0.1034 ≈ 0.002m along Franka Z,
+    #   negligible so set to zero.  (Revolute-finger depth varies by grip width;
+    #   a single fixed correction cannot capture this exactly.)
     grasp_eef_correction=np.array([
-        [ 0,  0, -1,  0.0  ],
-        [ 1,  0,  0,  0.0  ],
-        [ 0, -1,  0, -0.025],
-        [ 0,  0,  0,  1.0  ],
+        [ 0,  0, -1,  0.0],
+        [ 1,  0,  0,  0.0],
+        [ 0, -1,  0,  0.0],
+        [ 0,  0,  0,  1.0],
     ], dtype=np.float32),
 )
 

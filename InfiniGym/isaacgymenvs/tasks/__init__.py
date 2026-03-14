@@ -37,24 +37,42 @@ isaacgym_task_map = {
 
 try:
     # OMPL
-    from .fetch.fetch_mesh_pyompl import FetchMeshPyompl
-    from .fetch.repeat.fetch_mesh_pyompl_rep import FetchMeshPyomplRep
-    from .fetch.fetch_ptd_pyompl import FetchPtdPyompl
-    from .fetch.repeat.fetch_ptd_pyompl_rep import FetchPtdPyomplRep
+    try:
+        from .fetch.fetch_mesh_pyompl import FetchMeshPyompl
+    except: FetchMeshPyompl = None
+    try:
+        from .fetch.repeat.fetch_mesh_pyompl_rep import FetchMeshPyomplRep
+    except: FetchMeshPyomplRep = None
+    try:
+        from .fetch.fetch_ptd_pyompl import FetchPtdPyompl
+    except: FetchPtdPyompl = None
+    try:
+        from .fetch.repeat.fetch_ptd_pyompl_rep import FetchPtdPyomplRep
+    except: FetchPtdPyomplRep = None
 
     # Cabinet
-    from .fetch.fetch_ptd_cabinet import FetchPtdCabinet
-    from .fetch.fetch_ptd_cabinet_cgn_beta import FetchPtdCabinetCGNBeta
+    try:
+        from .fetch.fetch_ptd_cabinet import FetchPtdCabinet
+    except: FetchPtdCabinet = None
+    try:
+        from .fetch.fetch_ptd_cabinet_cgn_beta import FetchPtdCabinetCGNBeta
+    except: FetchPtdCabinetCGNBeta = None
 
     # Contact_Graspnet_Pytorch
     from .fetch.fetch_ptd_curobo_cgn_beta import FetchPtdCuroboCGNBeta
-    from .fetch.fetch_ptd_pyompl_cgn_beta import FetchPtdPyomplCGNBeta
+    try:
+        from .fetch.fetch_ptd_pyompl_cgn_beta import FetchPtdPyomplCGNBeta
+    except: FetchPtdPyomplCGNBeta = None
     from .fetch.fetch_mesh_curobo_cgn_beta import FetchMeshCuroboPtdCGNBeta
-    from .fetch.fetch_mesh_pyompl_cgn_beta import FetchMeshPyomplPtdCGNBeta
+    try:
+        from .fetch.fetch_mesh_pyompl_cgn_beta import FetchMeshPyomplPtdCGNBeta
+    except: FetchMeshPyomplPtdCGNBeta = None
 
     from .fetch.repeat.fetch_mesh_curobo_cgn_beta_rep import FetchMeshCuroboPtdCGNBetaRep
     from .fetch.repeat.fetch_ptd_curobo_cgn_beta_rep import FetchPtdCuroboCGNBetaRep
-    from .fetch.repeat.fetch_ptd_pyompl_cgn_beta_rep import FetchPtdPyomplCGNBetaRep
+    try:
+        from .fetch.repeat.fetch_ptd_pyompl_cgn_beta_rep import FetchPtdPyomplCGNBetaRep
+    except: FetchPtdPyomplCGNBetaRep = None
 
     isaacgym_task_map = {
         "FetchBase": FetchBase,
