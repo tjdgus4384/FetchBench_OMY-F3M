@@ -65,6 +65,9 @@ try:
     except: FetchPtdPyomplCGNBeta = None
     from .fetch.fetch_mesh_curobo_cgn_beta import FetchMeshCuroboPtdCGNBeta
     try:
+        from .fetch.fetch_mesh_curobo_graspgen import FetchMeshCuroboGraspGen
+    except: FetchMeshCuroboGraspGen = None
+    try:
         from .fetch.fetch_mesh_pyompl_cgn_beta import FetchMeshPyomplPtdCGNBeta
     except: FetchMeshPyomplPtdCGNBeta = None
 
@@ -95,6 +98,7 @@ try:
         "FetchPtdCuroboCGNBeta": FetchPtdCuroboCGNBeta,
         "FetchPtdPyomplCGNBeta": FetchPtdPyomplCGNBeta,
         "FetchMeshCuroboPtdCGNBeta": FetchMeshCuroboPtdCGNBeta,
+        "FetchMeshCuroboGraspGen": FetchMeshCuroboGraspGen,
         "FetchMeshPyomplPtdCGNBeta": FetchMeshPyomplPtdCGNBeta,
 
         "FetchPtdCabinet": FetchPtdCabinet,

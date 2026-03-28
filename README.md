@@ -1,174 +1,195 @@
-# FetchBench Benchmark Environments
+# FetchBench + OMY-F3M + GraspGen Integration
+
+This repository extends the [FetchBench](https://arxiv.org/abs/2406.11793) benchmark with:
+- **OMY-F3M robot** (ROBOTIS OpenMANIPULATOR-Y F3M, 6-DOF + RH-P12-RN gripper)
+- **GraspGen** ([NVIDIA, ICRA'26](https://arxiv.org/abs/2507.13097)) as a grasp generation method
+
+Based on [FetchBench-CORL2024](https://github.com/princeton-vl/FetchBench-CORL2024) (Isaac Gym).
 
 
-## About this repository
-
-This repository contains Isaac-Gym environments for the FetchBench benchmark (https://arxiv.org/abs/2406.11793) .
-
-To clone the project
-
-```
-git clone --recursive git@github.com:princeton-vl/FetchBench-CORL2024.git
-```
-
-
-## 1. Installation
-
-Please follow the steps below to perform the installation：
-
-### Create Virtual Env
-
-We suggest using python=3.8 and numpy=1.23.5.
+## Overview
 
 ```
-conda create -n FetchBench python=3.8 numpy=1.23.5
-conda activate FetchBench
+FetchBench (Isaac Gym)
+├── Franka Panda (7-DOF, original)
+└── OMY-F3M (6-DOF, added)
+
+Grasp Generation:
+  ├── ContactGraspNet (CGN)  ← original baseline
+  └── GraspGen (Diffusion)   ← added, runs as ZMQ server
+
+Pipeline:
+  Camera → Point Cloud → [CGN or GraspGen] → Grasp Poses
+    → CuRobo (IK + Motion Planning + Collision Check) → Execute → Evaluate
 ```
 
-### Install Pytorch
+### Grasp Retargeting
 
-We suggest using pytorch=1.13.0. Please ref: https://pytorch.org/get-started/previous-versions/ .
+GraspGen is trained on Franka Panda. To use with OMY-F3M:
+1. **GraspGen outputs** grasp poses in Franka EEF frame (approach=+Z, closing=±X in GraspGen convention → ±Y in URDF)
+2. **`graspgen_to_franka`** rotates from GraspGen internal convention to Franka panda_hand frame (+90 deg Z)
+3. **`grasp_eef_correction`** rotates from Franka EEF to OMY-F3M EEF (axis mapping: Franka +Z approach → OMY -Y approach)
+4. **`depth_offset`** (+0.017m) compensates for OMY-F3M's shorter fingers (Franka depth 0.105m vs OMY 0.088m)
 
+For CGN, the same `grasp_eef_correction` is applied. CGN also has `cgn_gripper_depth` in `robot_config.py` for its internal depth parameter.
+
+
+## Installation
+
+### 1. FetchBench Environment (Python 3.8, PyTorch 1.12/1.13)
+
+Follow the original FetchBench installation. Then install ZMQ client dependencies:
+
+```bash
+conda activate fetchbench
+pip install pyzmq msgpack msgpack-numpy
 ```
-conda install pytorch==1.13.0 torchvision==0.14.0 torchaudio==0.13.0 pytorch-cuda=11.7 -c pytorch -c nvidia
-```
 
-### Install Python Dependencies
+### 2. GraspGen Environment (Python 3.10, PyTorch 2.1)
 
-```
-pip install -r requirement.txt
-```
+GraspGen requires a separate conda environment due to PyTorch version mismatch.
 
-### Download Assets
+```bash
+# Create environment
+conda create -n graspgen python=3.10 -y
+conda activate graspgen
 
-Please download environment asset (asset_release.zip) from https://drive.google.com/file/d/1DJwa6lDaGN5_NhjL7liOBOGBWRJHowyB/view?usp=sharing.
+# Install PyTorch
+pip install torch==2.1.0 torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu121
+pip install torch-cluster torch-scatter -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
 
-The assets include procedural assets generated from Infinigen (https://github.com/princeton-vl/infinigen) and third-party asset from Acronym dataset (https://github.com/NVlabs/acronym, The dataset is released under CC BY-NC 4.0.).
-
-### Install Thirdy-party Packages
-
-Download third_party files (3rd_parties.zip) from https://drive.google.com/file/d/1LbtApHYUcOByw5odPebwcUG71J_tolgy/view?usp=sharing and put it under FetchBench/ . The packages under thirdy_party contain third-party codes from the following sources.
-
-#### Install Isaac-Gym
-
-We provide a copy of IsaacGym 4.0.0 (https://developer.nvidia.com/isaac-gym/download).
-
-```
-cd third_party/isaac-gym/python
+# Install GraspGen
+cd third_party/GraspGen
 pip install -e .
+
+# Build PointNet2 CUDA extension
+# Rename source dir so the installed package is used at runtime
+# (the local pointnet2_ops/ dir would shadow the compiled site-packages version)
+mv pointnet2_ops pointnet2_ops_src
+cd pointnet2_ops_src && pip install --no-build-isolation . && cd ..
 ```
 
-#### Install Curobo
+### 3. Download GraspGen Model Checkpoints
 
-We provide an adapted version of CuRobo 0.6.2 (https://curobo.org/).
+```bash
+# Install git-lfs if not installed
+apt-get install git-lfs && git lfs install
 
-```
-cd third_party/curobo
-pip install -e . --no-build-isolation
-```
-
-For cuda version mismatch issue, one can install the cudatoolkit-dev as follows
-
-```
-conda install conda-forge::cudatoolkit-dev
+# Clone checkpoints (~2.5 GB for all grippers, ~1 GB for Franka only)
+git clone https://huggingface.co/adithyamurali/GraspGenModels
+cd GraspGenModels && git lfs pull --include="checkpoints/graspgen_franka_panda*"
 ```
 
-#### (Optional) Install Contact-GraspNet-Pytorch
+### 4. CuRobo OMY-F3M Configuration
 
-If you want to run methods using contact-graspnet, we provide a copy of contact-graspnet-pytorch (https://github.com/elchun/contact_graspnet_pytorch).
+CuRobo needs robot config, collision spheres, URDF and meshes inside `third_party/curobo/`. These are not tracked by git. Run:
 
-```
-cd third_party/contact_graspnet_pytorch
-pip install -e .
-```
-
-#### (Optional) Install OMPL Packages
-
-If you want to run methods using ompl motion planning packages, please follow the step in (https://github.com/lyfkyle/pybullet_ompl?tab=readme-ov-file), and add the ompl python-bindings to the conda environment.
-
-#### (Optional) Install Cabinet and SceneCollisionNet
-
-If you want to run methods using cabinet, we provide a copy of scenecollisionnet (https://github.com/NVlabs/SceneCollisionNet) and cabinet (https://github.com/NVlabs/cabi_net).
-
-```
-conda install pytorch-scatter -c pyg
-cd third_party/SceneCollisionNet
-pip install -e .
-cd third_party/cabinet
-pip install -e .
-cd third_party/cabinet/pointnet2
-pip install -e .
+```bash
+python scripts/setup_omy_curobo.py
 ```
 
-#### (Optional) Download Imitation Learning Models
-
-If you want to run imitation learning models, please download the checkpoints (imit_ckpts.zip) from (https://drive.google.com/file/d/1wN9rDux3xXzcazWpbtYOi0Pe_240eDyu/view?usp=sharing).
-
-#### FAQ:
-
-1. What if I want to test some baselines but do not want to install other additional packages, e.g., OMPL?
-
-One can modify the code in InfiniGym/isaacgymenvs/tasks/__init__.py to comment out the corresponding methods' import to prevent explicitly loading these uninstalled packages. For example, if one does not install OMPL python-bindings, one should comment out all methods with Pyompl keywords. In this way, one can still test other methods with cabinet or contact-graspnet-pytorch.
-
-## 2. Run
+This copies robot config, collision spheres, URDF and meshes from `scripts/curobo_configs/omy_f3m/` (tracked by git) into `third_party/curobo/`. To regenerate collision spheres from visual meshes, run `python scripts/generate_omy_spheres.py`.
 
 
-### Add Env variables.
+## Running Experiments
 
-Please add the ASSET_PATH environment variable to specify the path to the asset directory.
+### Environment Variables
 
-```
-export ASSET_PATH=/path/to/the/assets
+```bash
+export ASSET_PATH=/path/to/FetchBench-CORL2024
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 ```
 
-### Minimal installation Test
+### CGN + Franka (Original Baseline)
 
-For minimal installation of isaacgym and curobo, one can run:
-
-```
+```bash
+conda activate fetchbench
 cd InfiniGym
-
-python isaacgymenvs/eval.py task=FetchMeshCurobo scene=benchmark_eval/RigidObjDesk_0
-```
-### Benchmark Test
-
-The overall command to test each method is
-
-``` 
-python isaacgymenvs/eval.py task=${METHOD} scene=bechmark_eval/${TASK} task.solution.XXX=YYY (Overwrite configs)...
+python isaacgymenvs/eval.py task=FetchMeshCuroboPtdCGNBeta scene=benchmark_eval/RigidObjDesk_0
 ```
 
-The list of \${METHOD} is shown in isaacgymenvs/config/task and the list of benchmark \${TASK} are shown in isaacgymenvs/config/scene/benchmark_eval .
+### CGN + OMY-F3M
 
-To be specific, to run the imitation learning models with a specific checkpoint, run:
-
-```
-python isaacgymenvs/eval.py task=FetchPtdImit${TYPE} scene=${TASK} task.solution.ckpt_path=/path/to/checkpoint/folder
-```
-where ${TYPE} in \{E2E, TwoStage, CuroboCGN\}.
-
-### Reference Code
-
-1. We provide reference code to generate infinite training tasks in InfiniGym/isaacgymenvs/tasks/fetch/infini_scene/infini_scenes.py.
-
-2. We provide reference code to generate infinite expert fetching trajectories in InfiniGym/isaacgymenvs/data_gen.py and InfiniGym/isaacgymenvs/tasks/fetch/fetch_mesh_curobo_datagen.py .
-
-3. We provide reference code to train the imitation learning models in InfiniGym/isaacgymenvs/train_imit.py. The code submodule (https://github.com/princeton-vl/FetchBench-Imit.git) is adapted from Optimus (https://github.com/NVlabs/Optimus?tab=readme-ov-file) under Nvidia License.
-
-4. We provide reference code to summarize the results of all benchmark tasks in InfiniGym/isaacgymenvs/result.py .
-
-5. We will release the baseline dataset and the data generation pipeline soon. Please contact us if you would like to have these asap.
-
-## Citing
-
-If you find our code useful, please cite:
-
-```
-@article{han2024fetchbench,
-  title={FetchBench: A Simulation Benchmark for Robot Fetching},
-  author={Han, Beining and Parakh, Meenal and Geng, Derek and Defay, Jack A and Gan, Luyang and Deng, Jia},
-  journal={arXiv preprint arXiv:2406.11793},
-  year={2024}
-}
+```bash
+python isaacgymenvs/eval.py task=FetchMeshCuroboPtdCGNBeta scene=benchmark_eval/RigidObjDesk_0 \
+    task.env.robot.robot_name=omy_f3m
 ```
 
+### GraspGen + OMY-F3M
+
+**Terminal 1 — GraspGen Server** (graspgen environment):
+```bash
+conda activate graspgen
+cd third_party/GraspGen
+python -c "
+import logging; logging.basicConfig(level=logging.INFO)
+from grasp_gen.serving.zmq_server import GraspGenZMQServer
+GraspGenZMQServer(gripper_config='<path_to_GraspGenModels>/checkpoints/graspgen_franka_panda.yml', port=5556).serve_forever()
+"
+```
+> export LD_PRELOAD=$CONDA_PREFIX/lib/libstdc++.so.6` 해야 할 수 있음. (CXXABI_1.3.15 not found)
+
+**Terminal 2 — FetchBench Evaluation** (fetchbench environment):
+```bash
+conda activate fetchbench
+cd InfiniGym
+python isaacgymenvs/eval.py task=FetchMeshCuroboGraspGen scene=benchmark_eval/RigidObjDesk_0 \
+    task.env.robot.robot_name=omy_f3m
+```
+
+### GraspGen + Franka
+
+```bash
+# Same GraspGen server as above, then:
+python isaacgymenvs/eval.py task=FetchMeshCuroboGraspGen scene=benchmark_eval/RigidObjDesk_0
+```
+
+### Useful Overrides
+
+```bash
+task.env.numTasks=5                    # limit number of tasks (default: 60)
+task.viewer.enable=False               # headless mode
+task.solution.pre_grasp_offset=0.04    # distance from pre-grasp to grasp pose
+task.solution.retract_offset=0.02      # lift height after grasping
+```
+
+## Technical Notes
+
+### CuRobo Collision Spheres
+
+The URDF collision geometries for OMY-F3M are conservatively oversized (e.g., link6 collision cylinder r=0.08 vs actual visual mesh r=0.04). The collision spheres are auto-generated from **visual meshes** (not URDF collision) using CuRobo's `fit_spheres_to_mesh`. To regenerate:
+
+```bash
+conda activate fetchbench
+python scripts/generate_omy_spheres.py
+```
+
+See `scripts/generate_omy_spheres.py` for details. 임시 파일이고, 실제 실험할 때는, [Isaac Sim Robot Description Editor](https://curobo.org/tutorials/1_robot_configuration.html) 사용해야 할 것.
+
+### GraspGen ZMQ Server Architecture
+
+GraspGen requires PyTorch 2.1+ while FetchBench uses PyTorch 1.12. Communication is via ZMQ:
+
+```
+[graspgen env]                      [fetchbench env]
+GraspGenZMQServer ──tcp:5556──>  GraspGenWrapper (graspgen_utils.py)
+PyTorch 2.1, CUDA 12.1            PyTorch 1.12, CUDA 11.2
+Only: pyzmq, msgpack               Only: pyzmq, msgpack (no torch needed)
+```
+
+### Free-Space Target Quaternions (OMY-F3M)
+
+OMY-F3M is 6-DOF, so not all position+orientation combinations are reachable. The `free_space_target_quaternions_wxyz` must be orientations that the IK solver can reach exactly (rot_err < 0.02). The current values `[0.5, 0.5, -0.5, 0.5]` and `[0.5, 0.5, 0.5, -0.5]` achieve rot_err=0.0 at the free-space positions.
+
+
+## Known Issues
+
+1. **cartesian_linear has no collision check**: The pre-grasp → grasp approach uses `follow_cartesian_linear_motion` without CuRobo collision checking. The robot may collide with the desk or objects during this phase. Applies to both CGN and GraspGen, both Franka and OMY-F3M.
+
+2. **6-DOF workspace limitations**: OMY-F3M cannot reach some positions/orientations that Franka (7-DOF) can. Some benchmark tasks may be unreachable.
+
+3. **Collision sphere precision**: Auto-fitted spheres are good but not perfect. Isaac Sim Robot Description Editor produces more precise spheres (used for Franka). Manual tuning may improve OMY-F3M results.
+
+4. **Scenes optimized for Franka**: FetchBench scenes (robot position, object placement) are designed for Franka's workspace. OMY-F3M may need scene adjustments for optimal performance.
+
+5. **Fetch "Invalid Problem"**: Some tasks fail at the fetch (retract) phase with "Invalid Problem" status. This occurs when the attached object creates a collision state that CuRobo cannot plan from. Increasing `retract_offset` may help.

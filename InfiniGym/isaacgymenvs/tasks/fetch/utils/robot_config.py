@@ -123,8 +123,10 @@ OMY_F3M_CONFIG = RobotConfig(
     # EEF -Y pointing down (world -Z), two wrist rotations for goalset flexibility.
     # Positions lowered to 0.55 (vs Franka 0.66) to stay within OMY workspace.
     free_space_target_positions=[[-0.15, -0.2, 0.55], [-0.15, 0.2, 0.55]],
-    free_space_target_quaternions_wxyz=[[0.7071, 0.7071, 0.0, 0.0],
-                                        [0.0, 0.0, 0.7071, 0.7071]],
+    # Use orientations that OMY-F3M can reach exactly (IK rot_err=0.0).
+    # Approach (-Y) points sideways, not down, but that's fine for retract.
+    free_space_target_quaternions_wxyz=[[0.5, 0.5, -0.5, 0.5],
+                                        [0.5, 0.5, 0.5, -0.5]],
     gripper_stiffness=1e4,
     gripper_damping=10.0,
     gripper_effort=15.0,

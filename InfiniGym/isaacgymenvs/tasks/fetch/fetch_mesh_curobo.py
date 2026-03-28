@@ -22,24 +22,7 @@ from curobo.wrap.reacher.motion_gen import MotionGen, MotionGenConfig, MotionGen
 from curobo.geom.sphere_fit import SphereFitType
 
 
-import math as _math
 from isaacgym import gymutil, gymtorch, gymapi
-
-# Scene .obj meshes are authored in Y-up; CuRobo world is Z-up.
-# Rotation: -90° around X  →  quaternion (wxyz) = [cos(-π/4), sin(-π/4), 0, 0]
-_Y2Z_QUAT_WXYZ_NP = np.array([_math.cos(-_math.pi / 4), _math.sin(-_math.pi / 4), 0.0, 0.0])
-
-
-def _qmul_wxyz_np(q1, q2):
-    """Hamilton product of two quaternions in (w,x,y,z) order (numpy)."""
-    w1, x1, y1, z1 = q1
-    w2, x2, y2, z2 = q2
-    return np.array([
-        w1*w2 - x1*x2 - y1*y2 - z1*z2,
-        w1*x2 + x1*w2 + y1*z2 - z1*y2,
-        w1*y2 - x1*z2 + y1*w2 + z1*x2,
-        w1*z2 + x1*y2 - y1*x2 + z1*w2,
-    ])
 from isaacgymenvs.utils.torch_jit_utils import (to_torch, get_axis_params, tensor_clamp,
                                                 tf_vector, tf_combine, quat_mul, quat_conjugate,
                                                 quat_to_angle_axis, tf_inverse, quat_apply,
@@ -266,13 +249,11 @@ class FetchMeshCurobo(FetchSolutionBase):
         for i in range(self.num_envs):
 
             # add scene asset
-            # Scene .obj files are Y-up; compose scene quat with Y→Z rotation
-            sq_y2z = _qmul_wxyz_np(sq[i], _Y2Z_QUAT_WXYZ_NP)
             scene_meshes = []
             for j, f in enumerate(self.scene_asset[i]["files"]):
                 c_mesh = Mesh(
                         name=f"env_{i}_mesh_{j}",
-                        pose=[*st[i], *sq_y2z],
+                        pose=[*st[i], *sq[i]],
                         file_path=f,
                         scale=[1.0, 1.0, 1.0],
                 )
@@ -288,16 +269,14 @@ class FetchMeshCurobo(FetchSolutionBase):
             # Todo: Add Combo Asset
 
             # add object asset
-            # Object .obj files are also Y-up; compose object quat with Y→Z rotation
             object_meshes = []
             oq_i, ot_i = oq[i], ot[i]
 
             for j, obj in enumerate(self.object_asset[i]):
                 q, t = oq_i[j], ot_i[j]
-                q_y2z = _qmul_wxyz_np(q, _Y2Z_QUAT_WXYZ_NP)
                 o_mesh = Mesh(
                     name=f"env_{i}_obj_{j}",
-                    pose=[*t, *q_y2z],
+                    pose=[*t, *q],
                     file_path=obj['file'],
                     scale=[1.0, 1.0, 1.0]
                 )
@@ -328,18 +307,7 @@ class FetchMeshCurobo(FetchSolutionBase):
 
             sq, st = scene_pose['quat'], scene_pose['pos']
             sq = torch.concat([sq[..., -1:], sq[..., :-1]], dim=-1)
-            # Scene .obj files are Y-up; compose scene quat with Y→Z rotation
-            _y2z = torch.tensor(_Y2Z_QUAT_WXYZ_NP, device=sq.device, dtype=sq.dtype)
-            sq_i = sq[i:i+1]  # (1, 4) wxyz
-            w1, x1, y1, z1 = sq_i[:, 0], sq_i[:, 1], sq_i[:, 2], sq_i[:, 3]
-            w2, x2, y2, z2 = _y2z[0], _y2z[1], _y2z[2], _y2z[3]
-            sq_y2z = torch.stack([
-                w1*w2 - x1*x2 - y1*y2 - z1*z2,
-                w1*x2 + x1*w2 + y1*z2 - z1*y2,
-                w1*y2 - x1*z2 + y1*w2 + z1*x2,
-                w1*z2 + x1*y2 - y1*x2 + z1*w2,
-            ], dim=-1)
-            pose = Pose(st[i:i+1], sq_y2z)
+            pose = Pose(st[i:i+1], sq[i:i+1])
 
             for j, f in enumerate(self.scene_asset[i]['files']):
                 self.ik_collision.update_mesh_pose(w_obj_pose=pose, name=f'env_{i}_mesh_{j}', env_idx=i)
@@ -347,17 +315,8 @@ class FetchMeshCurobo(FetchSolutionBase):
 
             oq, ot = object_pose['quat'], object_pose['pos']
             oq = torch.concat([oq[..., -1:], oq[..., :-1]], dim=-1)
-            # Object .obj files are also Y-up; compose with Y→Z rotation
             for j in range(self.num_objs):
-                oq_j = oq[i:i+1, j]  # (1, 4) wxyz
-                ow1, ox1, oy1, oz1 = oq_j[:, 0], oq_j[:, 1], oq_j[:, 2], oq_j[:, 3]
-                oq_y2z = torch.stack([
-                    ow1*w2 - ox1*x2 - oy1*y2 - oz1*z2,
-                    ow1*x2 + ox1*w2 + oy1*z2 - oz1*y2,
-                    ow1*y2 - ox1*z2 + oy1*w2 + oz1*x2,
-                    ow1*z2 + ox1*y2 - oy1*x2 + oz1*w2,
-                ], dim=-1)
-                pose = Pose(ot[i:i+1, j], oq_y2z)
+                pose = Pose(ot[i:i+1, j], oq[i:i+1, j])
                 self.ik_collision.update_mesh_pose(w_obj_pose=pose, name=f'env_{i}_obj_{j}', env_idx=i)
                 self.motion_generator_colliders[i].update_mesh_pose(w_obj_pose=pose, name=f'env_{i}_obj_{j}')
 

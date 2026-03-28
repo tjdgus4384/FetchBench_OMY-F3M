@@ -1,0 +1,98 @@
+##
+## OMY F3M robot configuration for CuRobo
+## 6-DOF arm + RH-P12-RN 4-DOF revolute mimic gripper
+##
+
+robot_cfg:
+  kinematics:
+    use_usd_kinematics: False
+    urdf_path: "robot/omy_f3m/omy_f3m.urdf"
+    asset_root_path: "robot/omy_f3m"
+    base_link: "link0"
+    ee_link: "end_effector_flange_link"
+    collision_link_names:
+      [
+        # "link0" excluded: base sits on table surface, collision_activation_distance
+        # causes false world-collision (spheres extend below table top).
+        # "link1" excluded: same issue, shoulder stays near table surface.
+        "link2",
+        "link3",
+        "link4",
+        "link5",
+        "link6",
+        "end_effector_flange_link",
+        "rh_p12_rn_base",
+        "rh_p12_rn_r1",
+        "rh_p12_rn_r2",
+        "rh_p12_rn_l1",
+        "rh_p12_rn_l2",
+        "attached_object",
+      ]
+    collision_spheres: "spheres/omy_f3m.yml"
+    collision_sphere_buffer: 0.0025
+    extra_collision_spheres: {"attached_object": 400}
+    use_global_cumul: True
+    self_collision_ignore:
+      {
+        "link1": ["link2", "link3"],
+        "link2": ["link3", "link4"],
+        "link3": ["link4", "link5"],
+        "link4": ["link5", "link6"],
+        "link5": ["link6", "end_effector_flange_link", "rh_p12_rn_base", "rh_p12_rn_r1", "rh_p12_rn_r2", "rh_p12_rn_l1", "rh_p12_rn_l2"],
+        "link6": ["end_effector_flange_link", "rh_p12_rn_base", "attached_object", "rh_p12_rn_r1", "rh_p12_rn_r2", "rh_p12_rn_l1", "rh_p12_rn_l2"],
+        "end_effector_flange_link": ["rh_p12_rn_base", "rh_p12_rn_r1", "rh_p12_rn_r2", "rh_p12_rn_l1", "rh_p12_rn_l2", "attached_object"],
+        "rh_p12_rn_base": ["rh_p12_rn_r1", "rh_p12_rn_r2", "rh_p12_rn_l1", "rh_p12_rn_l2", "attached_object"],
+        "rh_p12_rn_r1": ["rh_p12_rn_r2", "rh_p12_rn_l1", "rh_p12_rn_l2", "attached_object"],
+        "rh_p12_rn_r2": ["rh_p12_rn_l1", "rh_p12_rn_l2", "attached_object"],
+        "rh_p12_rn_l1": ["rh_p12_rn_l2", "attached_object"],
+        "rh_p12_rn_l2": ["attached_object"],
+      }
+    self_collision_buffer:
+      {
+        "link1": 0.05,
+        "link2": 0.0,
+        "link3": 0.0,
+        "link4": 0.0,
+        "link5": 0.0,
+        "link6": 0.0,
+        "end_effector_flange_link": 0.02,
+        "rh_p12_rn_base": 0.01,
+        "rh_p12_rn_r1": 0.01,
+        "rh_p12_rn_r2": 0.01,
+        "rh_p12_rn_l1": 0.01,
+        "rh_p12_rn_l2": 0.01,
+        "attached_object": 0.0,
+      }
+    mesh_link_names:
+      [
+        "link1",
+        "link2",
+        "link3",
+        "link4",
+        "link5",
+        "link6",
+        "end_effector_flange_link",
+        "rh_p12_rn_base",
+        "rh_p12_rn_r1",
+        "rh_p12_rn_r2",
+        "rh_p12_rn_l1",
+        "rh_p12_rn_l2",
+      ]
+    lock_joints:
+      {
+        "rh_r1_joint": 0.0,
+        "rh_r2": 0.0,
+        "rh_l1": 0.0,
+        "rh_l2": 0.0,
+      }
+    extra_links: {"attached_object": {"parent_link_name": "end_effector_flange_link",
+      "link_name": "attached_object", "fixed_transform": [0,0,0,1,0,0,0], "joint_type": "FIXED",
+      "joint_name": "attach_joint"}}
+    cspace:
+      joint_names: ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
+        "rh_r1_joint", "rh_r2", "rh_l1", "rh_l2"]
+      retract_config: [0.0, -1.57, 1.57, 0.0, 1.57, 0.0, 0.0, 0.0, 0.0, 0.0]
+      null_space_weight: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      cspace_distance_weight: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+      max_acceleration: 10.0
+      max_jerk: 500.0
