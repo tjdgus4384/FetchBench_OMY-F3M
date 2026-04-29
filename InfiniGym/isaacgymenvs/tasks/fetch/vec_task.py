@@ -458,7 +458,12 @@ class VecTask(Env):
         # if running with a viewer, set up keyboard shortcuts and camera
         if self.headless == False and self.cfg["viewer"]["enable"]:
             # subscribe to keyboard shortcuts
-            self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
+            viewer_props = gymapi.CameraProperties()
+            #viewer_props.width = 3200
+            #viewer_props.height = 1800
+            self.viewer = self.gym.create_viewer(self.sim, viewer_props)
+
+            #self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
             self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_ESCAPE, "QUIT")
             self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_V, "toggle_viewer_sync")
             self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_R, "record_frames")

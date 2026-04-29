@@ -16,6 +16,7 @@ CUROBO = os.path.join(REPO_ROOT, "third_party/curobo/src/curobo/content")
 
 COPIES = [
     ("omy_f3m.yml", "configs/robot/omy_f3m.yml"),
+    ("omy_f3m_close.yml", "configs/robot/omy_f3m_close.yml"),
     ("spheres_omy_f3m.yml", "configs/robot/spheres/omy_f3m.yml"),
 ]
 

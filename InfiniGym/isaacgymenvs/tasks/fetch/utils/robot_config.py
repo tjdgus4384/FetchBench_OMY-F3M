@@ -27,6 +27,7 @@ class RobotConfig:
     gripper_mimic_multiplier: List[float]
 
     curobo_config_name: str
+    curobo_close_config_name: Optional[str] = None
 
     # Collision filter for create_actor (0 = self-collision enabled, 1 = disabled)
     self_collision_filter: int = 0
@@ -117,6 +118,7 @@ OMY_F3M_CONFIG = RobotConfig(
     gripper_type="revolute_mimic",
     gripper_mimic_multiplier=[1.0, 1.0, 1.0, 1.0],
     curobo_config_name="omy_f3m.yml",
+    curobo_close_config_name="omy_f3m_close.yml",
     gripper_open_is_upper=False,
     self_collision_filter=1,
     eef_approach_axis=[0.0, -1.0, 0.0],

@@ -98,10 +98,10 @@ robot_cfg:
       ]
     lock_joints:
       {
-        "rh_r1_joint": 0.0,
-        "rh_r2": 0.0,
-        "rh_l1": 0.0,
-        "rh_l2": 0.0,
+        "rh_r1_joint": 0.8,
+        "rh_r2": 0.8,
+        "rh_l1": 0.8,
+        "rh_l2": 0.8,
       }
     extra_links: {"attached_object": {"parent_link_name": "end_effector_flange_link",
       "link_name": "attached_object", "fixed_transform": [0,0,0,1,0,0,0], "joint_type": "FIXED",

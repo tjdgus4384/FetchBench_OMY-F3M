@@ -72,33 +72,15 @@ class FetchMeshCurobo(FetchSolutionBase):
         self.ik_collision = self.ik_solver.world_coll_checker
 
         # setup cuRobo batch motion gen (for each env)
-        self.motion_generators, self.motion_generator_colliders = [], []
-        world_cuRobo_cfg_list = self._get_cuRobo_world_config()
-        for i in range(self.num_envs):
-            motion_gen_config = MotionGenConfig.load_from_robot_config(
-                self._get_cuRobo_robot_config(),
-                world_cuRobo_cfg_list[i],
-                tensor_args=self.tensor_args,
-                trajopt_tsteps=self.cfg["solution"]["cuRobo"]["motion_trajopt_steps"],
-                collision_checker_type=CollisionCheckerType.MESH,
-                use_cuda_graph=False,
-                num_trajopt_seeds=self.cfg["solution"]["cuRobo"]["trjopt_num_seed"],
-                num_graph_seeds=self.cfg["solution"]["cuRobo"]["graph_num_seed"],
-                num_ik_seeds=self.cfg["solution"]["cuRobo"]["ik_num_seed"],
-                interpolation_dt=self.cfg["solution"]["cuRobo"]["motion_interpolation_dt"],
-                collision_activation_distance=self.cfg["solution"]["cuRobo"]["collision_activation_dist"],
-                interpolation_steps=self.cfg["solution"]["cuRobo"]["motion_interpolation_steps"],
-                self_collision_check=True,
-                self_collision_opt=True,
-                maximum_trajectory_dt=0.1,
-                rotation_threshold=self.cfg["solution"]["cuRobo"]["ik_rot_th"],
-                position_threshold=self.cfg["solution"]["cuRobo"]["ik_pos_th"],
+        self.motion_generators_open, self.motion_generator_colliders_open = self._build_motion_generators()
+        self.motion_generators_closed, self.motion_generator_colliders_closed = (None, None)
+        if self.robot_cfg.curobo_close_config_name is not None:
+            self.motion_generators_closed, self.motion_generator_colliders_closed = self._build_motion_generators(
+                self.robot_cfg.curobo_close_config_name
             )
-            motion_generator = MotionGen(motion_gen_config)
-            motion_generator.reset()
-
-            self.motion_generators.append(motion_generator)
-            self.motion_generator_colliders.append(motion_generator.world_coll_checker)
+        self._active_motion_gen_mode = "open"
+        self.motion_generators = self.motion_generators_open
+        self.motion_generator_colliders = self.motion_generator_colliders_open
 
         self.motion_plan_config_graph = MotionGenPlanConfig(
             enable_graph=self.cfg["solution"]["cuRobo"]["enable_graph"],
@@ -225,13 +207,58 @@ class FetchMeshCurobo(FetchSolutionBase):
 
         return padded_trajs
 
-    def _get_cuRobo_robot_config(self):
-        robot_config = load_yaml(join_path(get_robot_configs_path(), self.robot_cfg.curobo_config_name))["robot_cfg"]
+    def _get_cuRobo_robot_config(self, config_name=None):
+        if config_name is None:
+            config_name = self.robot_cfg.curobo_config_name
+
+        robot_config = load_yaml(join_path(get_robot_configs_path(), config_name))["robot_cfg"]
         robot_cuRobo_cfg = RobotConfig.from_dict(robot_config)
         robot_cuRobo_cfg.cspace.velocity_scale *= self.cfg['solution']['cuRobo']['velocity_scale']
         robot_cuRobo_cfg.cspace.acceleration_scale *= self.cfg['solution']['cuRobo']['acceleration_scale']
 
         return robot_cuRobo_cfg
+
+    def _build_motion_generators(self, config_name=None):
+        motion_generators, motion_generator_colliders = [], []
+        world_curobo_cfg_list = self._get_cuRobo_world_config()
+        robot_config = self._get_cuRobo_robot_config(config_name)
+
+        for i in range(self.num_envs):
+            motion_gen_config = MotionGenConfig.load_from_robot_config(
+                robot_config,
+                world_curobo_cfg_list[i],
+                tensor_args=self.tensor_args,
+                trajopt_tsteps=self.cfg["solution"]["cuRobo"]["motion_trajopt_steps"],
+                collision_checker_type=CollisionCheckerType.MESH,
+                use_cuda_graph=False,
+                num_trajopt_seeds=self.cfg["solution"]["cuRobo"]["trjopt_num_seed"],
+                num_graph_seeds=self.cfg["solution"]["cuRobo"]["graph_num_seed"],
+                num_ik_seeds=self.cfg["solution"]["cuRobo"]["ik_num_seed"],
+                interpolation_dt=self.cfg["solution"]["cuRobo"]["motion_interpolation_dt"],
+                collision_activation_distance=self.cfg["solution"]["cuRobo"]["collision_activation_dist"],
+                interpolation_steps=self.cfg["solution"]["cuRobo"]["motion_interpolation_steps"],
+                self_collision_check=True,
+                self_collision_opt=True,
+                maximum_trajectory_dt=0.1,
+                rotation_threshold=self.cfg["solution"]["cuRobo"]["ik_rot_th"],
+                position_threshold=self.cfg["solution"]["cuRobo"]["ik_pos_th"],
+            )
+            motion_generator = MotionGen(motion_gen_config)
+            motion_generator.reset()
+            motion_generators.append(motion_generator)
+            motion_generator_colliders.append(motion_generator.world_coll_checker)
+
+        return motion_generators, motion_generator_colliders
+
+    def _set_active_motion_generators(self, use_closed=False):
+        if use_closed and self.motion_generators_closed is not None:
+            self.motion_generators = self.motion_generators_closed
+            self.motion_generator_colliders = self.motion_generator_colliders_closed
+            self._active_motion_gen_mode = "closed"
+        else:
+            self.motion_generators = self.motion_generators_open
+            self.motion_generator_colliders = self.motion_generator_colliders_open
+            self._active_motion_gen_mode = "open"
 
     def _get_cuRobo_world_config(self):
         pose = self._get_pose_in_robot_frame()
@@ -324,6 +351,9 @@ class FetchMeshCurobo(FetchSolutionBase):
             m.reset()
 
     def update_cuRobo_motion_gen_config(self, attach_goal_obj=True):
+        if attach_goal_obj:
+            self._set_active_motion_generators(use_closed=self.robot_cfg.curobo_close_config_name is not None)
+
         self.update_cuRobo_world_collider_pose()
 
         q, qd = (self.states["q"].clone().to(self.tensor_args.device),
@@ -372,6 +402,10 @@ class FetchMeshCurobo(FetchSolutionBase):
             for m in self.motion_generators:
                 m.detach_object_from_robot()
                 m.reset()
+
+            if self._active_motion_gen_mode == "closed":
+                self._set_active_motion_generators(use_closed=False)
+                self.update_cuRobo_world_collider_pose()
 
         if self.debug_viz and self.viewer:
             for i in range(self.num_envs):
@@ -1033,4 +1067,3 @@ def plot_trajs(trajs, dt, n_grip=2):
 
     plt.legend()
     plt.show()
-
